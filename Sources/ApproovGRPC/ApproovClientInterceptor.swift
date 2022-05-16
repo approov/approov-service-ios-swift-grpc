@@ -39,47 +39,13 @@ public class ApproovClientInterceptor<Request, Reply>: ClientInterceptor<Request
         switch part {
         // The (user-provided) request headers, these are sent at the start of each RPC.
         case var .metadata(headers):
-            // Check if Bind Header is set to a non empty string
-            if ApproovService.bindHeader != "" {
-                /*  Query the URLSessionConfiguration for user set headers. They would be set like so:
-                 *  config.httpAdditionalHeaders = ["Authorization Bearer" : "token"]
-                 *  Since the URLSessionConfiguration is part of the init call and we store its reference
-                 *  we check for the presence of a user set header there.
-                 */
-                if let aValue = headers.first(name: ApproovService.bindHeader) {
-                    // Add the Bind Header as a data hash to Approov token
-                    Approov.setDataHashInToken(aValue)
-                }
-            }
-            // Fetch the Approov token
-            let result: ApproovTokenFetchResult = Approov.fetchTokenAndWait(hostname)
-            print("Approov: Approov token for host: \(hostname) : \(result.loggableToken())")
-            if result.isConfigChanged {
-                // Store dynamic config file if a change has occurred
-                if let newConfig = Approov.fetchConfig() {
-                    ApproovService.storeDynamicConfig(newConfig: newConfig)
-                }
-            }
-            switch result.status {
-            case ApproovTokenFetchStatus.success:
-                // Can go ahead and make the API call with the provided request object
-                // Set Approov-Token header
-                headers.add(name: ApproovService.approovTokenHeaderAndPrefix.approovTokenHeader,
-                            value: ApproovService.approovTokenHeaderAndPrefix.approovTokenPrefix + result.token)
+            do {
+                headers = try ApproovService.updateRequestHeaders(headers: headers, hostname: hostname)
                 // Forward the request part to the next interceptor.
                 context.send(.metadata(headers), promise: promise)
-            case ApproovTokenFetchStatus.noNetwork,
-                 ApproovTokenFetchStatus.poorNetwork,
-                 ApproovTokenFetchStatus.mitmDetected:
+            } catch {
+                promise?.fail(error)
                 // Must not proceed with the network request - cancel it
-                context.cancel(promise: promise)
-            case ApproovTokenFetchStatus.unprotectedURL,
-                 ApproovTokenFetchStatus.unknownURL,
-                 ApproovTokenFetchStatus.noApproovService:
-                // We do NOT add the Approov-Token header to the request headers and proceed
-                // Forward the request part to the next interceptor.
-                context.send(part, promise: promise)
-            default:
                 context.cancel(promise: promise)
             }
 

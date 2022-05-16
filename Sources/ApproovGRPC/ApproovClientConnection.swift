@@ -25,19 +25,6 @@ import NIOSSL
 
 public class ApproovClientConnection {
 
-    // Approov service singleton handle
-    static var approovService: ApproovService?
-
-    // Ensure the Approov SDK is initialized
-    static func ensureApproovInitialised(approovConfigString: String? = nil) {
-        // Set config string if not nil
-        if approovConfigString != nil {
-            ApproovService.approovConfigString = approovConfigString
-        }
-        // Approov service singleton handle
-        approovService = ApproovService.sharedInstance!
-    }
-
     /// Returns an insecure `ClientConnection` builder which is *not configured with TLS*.
     public class func insecure(group: EventLoopGroup) -> ClientConnection.Builder {
         return ClientConnection.insecure(group: group)
@@ -50,7 +37,6 @@ public class ApproovClientConnection {
     )
     public class func secure(approovConfigString: String?, group: EventLoopGroup) -> ApproovClientConnection.Builder
     {
-        ensureApproovInitialised(approovConfigString: approovConfigString)
         let builder = ClientConnection.secure(group: group)
         return ApproovClientConnection.Builder(delegate: builder)
     }
@@ -75,7 +61,6 @@ public class ApproovClientConnection {
     public static func usingPlatformAppropriateTLS(approovConfigString: String?,
       for group: EventLoopGroup
     ) -> ApproovClientConnection.Builder {
-        ensureApproovInitialised(approovConfigString: approovConfigString)
         let builder = ClientConnection.usingPlatformAppropriateTLS(for: group)
         return ApproovClientConnection.Builder(delegate: builder)
     }
@@ -90,7 +75,6 @@ public class ApproovClientConnection {
     public static func usingTLSBackedByNIOSSL(approovConfigString: String?,
         on group: EventLoopGroup
     ) -> ApproovClientConnection.Builder {
-        ensureApproovInitialised(approovConfigString: approovConfigString)
         let builder = ClientConnection.usingTLSBackedByNIOSSL(on: group)
         return ApproovClientConnection.Builder(delegate: builder)
     }
@@ -124,7 +108,6 @@ public class ApproovClientConnection {
         with configuration: GRPCTLSConfiguration,
         on group: EventLoopGroup
     ) -> ApproovClientConnection.Builder {
-        ensureApproovInitialised(approovConfigString: approovConfigString)
         let builder = ClientConnection.usingTLS(with: configuration, on: group)
         return ApproovClientConnection.Builder(delegate: builder)
     }

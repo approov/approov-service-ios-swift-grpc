@@ -21,6 +21,7 @@ import CommonCrypto
 import Foundation
 import NIO
 import NIOSSL
+import os.log
 
 
 class SecurityFrameworkValidator {
@@ -110,7 +111,7 @@ class SecurityFrameworkValidator {
                 }
             }
         } catch {
-            NSLog("Security framework validation error: \(error)")
+            os_log("Approov: Security framework validation error: %@", type: .error, error.localizedDescription)
             return false
         }
         return false
