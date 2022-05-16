@@ -35,7 +35,7 @@ public class ApproovClientConnection {
         *, deprecated,
         message: "Use one of 'usingPlatformAppropriateTLS(for:)', 'usingTLSBackedByNIOSSL(on:)' or 'usingTLSBackedByNetworkFramework(on:)' or 'usingTLS(on:with:)'"
     )
-    public class func secure(approovConfigString: String?, group: EventLoopGroup) -> ApproovClientConnection.Builder
+    public class func secure(group: EventLoopGroup) -> ApproovClientConnection.Builder
     {
         let builder = ClientConnection.secure(group: group)
         return ApproovClientConnection.Builder(delegate: builder)
@@ -58,9 +58,7 @@ public class ApproovClientConnection {
     ///
     /// This function returns a builder using the `NIOSSL` backend if a `MultiThreadedEventLoopGroup`
     /// is supplied and a 'Network.framework' backend if a `NIOTSEventLoopGroup` is used.
-    public static func usingPlatformAppropriateTLS(approovConfigString: String?,
-      for group: EventLoopGroup
-    ) -> ApproovClientConnection.Builder {
+    public static func usingPlatformAppropriateTLS(for group: EventLoopGroup) -> ApproovClientConnection.Builder {
         let builder = ClientConnection.usingPlatformAppropriateTLS(for: group)
         return ApproovClientConnection.Builder(delegate: builder)
     }
@@ -72,9 +70,7 @@ public class ApproovClientConnection {
     ///
     /// - Parameter group: The `EventLoopGroup` use for the connection.
     /// - Returns: A builder for a connection using the NIOSSL TLS backend.
-    public static func usingTLSBackedByNIOSSL(approovConfigString: String?,
-        on group: EventLoopGroup
-    ) -> ApproovClientConnection.Builder {
+    public static func usingTLSBackedByNIOSSL(on group: EventLoopGroup) -> ApproovClientConnection.Builder {
         let builder = ClientConnection.usingTLSBackedByNIOSSL(on: group)
         return ApproovClientConnection.Builder(delegate: builder)
     }
@@ -88,12 +84,9 @@ public class ApproovClientConnection {
     /// - Parameter group: The `EventLoopGroup` use for the connection.
     /// - Returns: A builder for a connection using the Network.framework TLS backend.
     @available(*, unavailable, message: "Network.framework is not supported by ApproovGRPC. Consider using usingTLSBackedByNIOSSL()")
-    public static func usingTLSBackedByNetworkFramework(approovConfigString: String?,
-        on group: EventLoopGroup
-    ) -> ApproovClientConnection.Builder {
+    public static func usingTLSBackedByNetworkFramework(on group: EventLoopGroup) -> ApproovClientConnection.Builder {
         // Network.framework is not supported by ApproovGRPC
         abort()
-        // ensureApproovInitialised(approovConfigString: approovConfigString)
         // let builder = ClientConnection.usingTLSBackedByNetworkFramework(on: group)
         // return ApproovClientConnection.Builder(delegate: builder)
     }
@@ -104,7 +97,7 @@ public class ApproovClientConnection {
     ///
     /// - Important: The caller is responsible for ensuring the provided `configuration` may be used
     ///   the the `group`.
-    public static func usingTLS(approovConfigString: String?,
+    public static func usingTLS(
         with configuration: GRPCTLSConfiguration,
         on group: EventLoopGroup
     ) -> ApproovClientConnection.Builder {
