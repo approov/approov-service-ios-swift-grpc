@@ -22,6 +22,7 @@ import CommonCrypto
 import Foundation
 import NIO
 import NIOSSL
+import os.log
 
 class ApproovPinningVerifier {
 
@@ -80,14 +81,15 @@ class ApproovPinningVerifier {
         promise: EventLoopPromise<NIOSSLVerificationResult>
     ) -> Void {
         if (self.verificationCallback != nil) {
-            let internalPromise: EventLoopPromise<NIOSSLVerificationResult> = promise.futureResult.eventLoop.makePromise()
+            let internalPromise: EventLoopPromise<NIOSSLVerificationResult> =
+                promise.futureResult.eventLoop.makePromise()
             self.verificationCallback!(certChain, internalPromise)
             internalPromise.futureResult.whenSuccess {result in
                 switch result {
-                    case .certificateVerified:
-                        self.verifyApproovPinning(certChain: certChain, promise: promise)
-                    case .failed:
-                        promise.succeed(.failed)
+                case .certificateVerified:
+                    self.verifyApproovPinning(certChain: certChain, promise: promise)
+                case .failed:
+                    promise.succeed(.failed)
                 }
             }
             internalPromise.futureResult.whenFailure {error in
@@ -112,9 +114,17 @@ class ApproovPinningVerifier {
         let callbackQueue = DispatchQueue(label: "io.approov.pinningCallbackQueue")
         callbackQueue.async {
             let isValidated: Bool
-            if self.securityFrameworkValidator.trustRoots == nil || self.securityFrameworkValidator.trustRoots == .default {
-                // This must not be called if different trust roots are set
-                isValidated = self.securityFrameworkValidator.validateSecurityFramework(certChain: certChain)
+            if self.securityFrameworkValidator.trustRoots == nil ||
+                self.securityFrameworkValidator.trustRoots == .default {
+                do {
+                    // This must not be called if different trust roots are set
+                    isValidated = try self.securityFrameworkValidator.validateSecurityFramework(certChain: certChain)
+                } catch {
+                    promise.fail(ApproovError.pinningError(
+                        message: "Error during security framework validation for host " +
+                        self.securityFrameworkValidator.expectedHostname + ": " + error.localizedDescription))
+                    isValidated = false
+                }
             } else {
                 do {
                     // Create a server trust from the peer certificates
@@ -128,27 +138,38 @@ class ApproovPinningVerifier {
                     var serverTrust: SecTrust? = nil
                     let result = SecTrustCreateWithCertificates(peerCertificates as CFArray, policy, &serverTrust)
                     if (result != errSecSuccess) {
+                        promise.fail(ApproovError.pinningError(
+                            message: "Error during certificate trust creation for host " +
+                                self.securityFrameworkValidator.expectedHostname))
                         isValidated = false
                     } else {
                         // Check the server trust
                         var trustType = SecTrustResultType.invalid
                         if (SecTrustEvaluate(serverTrust!, &trustType) != errSecSuccess) {
+                            promise.fail(ApproovError.pinningError(
+                                message: "Error during certificate trust evaluation for host " +
+                                    self.securityFrameworkValidator.expectedHostname))
                             isValidated = false
-                        } else if (trustType != SecTrustResultType.proceed) && (trustType != SecTrustResultType.unspecified) {
+                        } else if (trustType != SecTrustResultType.proceed) &&
+                            (trustType != SecTrustResultType.unspecified) {
+                            promise.fail(ApproovError.pinningError(
+                                message: "Certificate Trust Evaluation failure for host " +
+                                    self.securityFrameworkValidator.expectedHostname))
                             isValidated = false
                         } else {
                             isValidated = true
                         }
                     }
                 } catch {
-                    // Log any error that occurred during the certificate chain check
-                    NSLog("Approov: Error in server certificate chain check: \(error)")
+                    promise.fail(ApproovError.pinningError(
+                        message: "Error in server certificate chain check: \(error.localizedDescription)"))
                     isValidated = false
                 }
             }
             if isValidated {
                 do {
-                    let isVerified = try self.hasApproovPinMatch(host: self.securityFrameworkValidator.expectedHostname, certChain: certChain)
+                    let isVerified = try self.hasApproovPinMatch(host: self.securityFrameworkValidator.expectedHostname,
+                        certChain: certChain)
                     if isVerified {
                         promise.succeed(.certificateVerified)
                     } else {
@@ -163,12 +184,13 @@ class ApproovPinningVerifier {
 
     /**
      * Checks whether a certificate chain contains a match to an Approov pin
+     *
      * @param host for which to check pinning
      * @param certChain in which to look for a match to an Approov pin
      */
     func hasApproovPinMatch(host: String, certChain: [NIOSSLCertificate]) throws -> Bool {
         // ensure pins are refreshed eventually
-        ApproovService.prefetchApproovToken()
+        ApproovService.prefetch()
         // Get the certificate chain count
         for cert in certChain {
             // Get the current certificate from the chain
@@ -176,7 +198,8 @@ class ApproovPinningVerifier {
             let newCert: SecCertificate = SecCertificateCreateWithData(nil, data as CFData)!
             guard let publicKeyInfo = publicKeyInfoOfCertificate(certificate: newCert) else {
                 // Throw to indicate we could not parse SPKI header
-                throw ApproovError.runtimeError(message: "Error parsing SPKI header for host \(host) Unsupported certificate type, SPKI header cannot be created")
+                throw ApproovError.pinningError(message: "Error parsing SPKI header for host \(host). " +
+                    "Unsupported certificate type, SPKI header cannot be created")
             }
 
             // Compute the SHA-256 hash of the public key info
@@ -184,14 +207,23 @@ class ApproovPinningVerifier {
 
             // Check that the hash is the same as at least one of the pins
             guard let approovCertHashes = Approov.getPins("public-key-sha256") else {
-                throw ApproovError.runtimeError(message: "Approov SDK getPins() call failed")
+                throw ApproovError.pinningError(message: "Approov SDK getPins() call failed")
             }
             // Get the receivers host
-            if let certHashesBase64 = approovCertHashes[host] {
-                // We have no pins defined for this host, accept connection (unpinned)
+            if var certHashesBase64 = approovCertHashes[host] {
+                // Check whether we have pins defined for this host
                 if certHashesBase64.count == 0 {
-                    return true
+                    // There are no pins defined for this host, check for managed trust roots
+                    if let managedTrustRootHashesBase64 = approovCertHashes["*"] {
+                        // Managed trust roots are available, so use these
+                        certHashesBase64 = managedTrustRootHashesBase64
+                    } else {
+                        // There are no managed trust roots either, accept connection. We do not pin connections
+                        // where no pins are explicitly set for the host.
+                        return true
+                    }
                 }
+
                 // We have one or more cert hashes matching the receiver's host, compare them
                 for certHashBase64 in certHashesBase64 {
                     let certHash = Data(base64Encoded: certHashBase64)
@@ -205,7 +237,7 @@ class ApproovPinningVerifier {
             }
         }
         // No match in current set of pins from Approov SDK and certificate chain seen during TLS handshake
-        NSLog("Approov: Pinning rejection for \(host)")
+        os_log("ApproovService: Pinning rejection for %@", type: .error, host)
         return false
     }
 
@@ -218,8 +250,8 @@ class ApproovPinningVerifier {
             publicKey = SecCertificateCopyKey(certificate)
         } else {
             // Fallback on earlier versions
-            // from TrustKit https://github.com/datatheorem/TrustKit/blob/master/TrustKit/Pinning/TSKSPKIHashCache.m lines
-            // 221-234:
+            // from TrustKit https://github.com/datatheorem/TrustKit/blob/master/TrustKit/Pinning/TSKSPKIHashCache.m
+            // lines 221-234:
             // Create an X509 trust using the certificate
             let secPolicy = SecPolicyCreateBasicX509()
             var secTrust:SecTrust?

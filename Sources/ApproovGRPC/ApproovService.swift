@@ -86,7 +86,7 @@ public class ApproovService {
                 if (config != approovConfigString) {
                     // Throw exception indicating we are attempting to use different config
                     let errorMessage = "Attempting to initialize with different configuration"
-                    os_log("Approov: %@", type: .error, errorMessage)
+                    os_log("ApproovService: %@", type: .error, errorMessage)
                     throw ApproovError.configurationError(message: errorMessage)
                 }
                 return
@@ -100,7 +100,7 @@ public class ApproovService {
             } catch let error {
                 // Log error and throw exception
                 let errorMessage = "Error initializing Approov SDK: \(error.localizedDescription)"
-                os_log("Approov: %@", type: .error, errorMessage)
+                os_log("ApproovService: %@", type: .error, errorMessage)
                 throw ApproovError.initializationFailure(message: errorMessage)
             }
         }
@@ -256,7 +256,7 @@ public class ApproovService {
         }
         // Fetch the Approov token
         let result: ApproovTokenFetchResult = Approov.fetchTokenAndWait(hostname)
-        os_log("Approov: update headers %@: %@", type: .info, hostname, result.loggableToken())
+        os_log("ApproovService: update headers %@: %@", type: .info, hostname, result.loggableToken())
 
         var updatedHeaders: HPACKHeaders = [:]
         switch result.status {
@@ -311,7 +311,7 @@ public class ApproovService {
                 }
                 // Look up header value in Approov
                 let approovResults = Approov.fetchSecureStringAndWait(String(headerValue), nil)
-                os_log("Approov: Substituting header: %@, %@", type: .info, headerName,
+                os_log("ApproovService: Substituting header: %@, %@", type: .info, headerName,
                     Approov.string(from: approovResults.status))
                 // Process the result of the secure string fetch operation
                 switch approovResults.status {
@@ -395,7 +395,7 @@ public class ApproovService {
      */
     public static func getDeviceID() throws -> String {
         if let deviceID: String = Approov.getDeviceID() {
-            os_log("Approov: getDeviceID: %@", type: .debug, deviceID)
+            os_log("ApproovService: getDeviceID: %@", type: .debug, deviceID)
             return deviceID
         }
         throw ApproovError.runtimeError(message: "getDeviceID: no device ID")
@@ -412,7 +412,7 @@ public class ApproovService {
      */
     public static func setDataHashInToken(data: String) {
         Approov.setDataHashInToken(data);
-        os_log("Approov: setDataHashInToken", type: .debug);
+        os_log("ApproovService: setDataHashInToken", type: .debug);
     }
 
     /**
@@ -431,7 +431,7 @@ public class ApproovService {
     public static func fetchToken(url: String) throws -> String {
         // Fetch the Approov token
         let result: ApproovTokenFetchResult = Approov.fetchTokenAndWait(url)
-        os_log("Approov: fetchToken: %@", type: .debug, Approov.string(from: result.status))
+        os_log("ApproovService: fetchToken: %@", type: .debug, Approov.string(from: result.status))
 
         // Process the status
         switch result.status {
@@ -464,7 +464,7 @@ public class ApproovService {
      */
     public static func getMessageSignature(message: String) throws -> String {
         if let signature: String = Approov.getMessageSignature(message) {
-            os_log("Approov: getMessageSignature", type: .debug);
+            os_log("ApproovService: getMessageSignature", type: .debug);
             return signature
         }
         throw ApproovError.permanentError(message: "getMessageSignature: no signature available");
@@ -497,7 +497,7 @@ public class ApproovService {
         }
         // Fetch the secure string
         let approovResult = Approov.fetchSecureStringAndWait(key, newDef)
-        os_log("Approov: fetchSecureString: %@: %@", type: .info, type, Approov.string(from: approovResult.status))
+        os_log("ApproovService: fetchSecureString: %@: %@", type: .info, type, Approov.string(from: approovResult.status))
         // Process the returned Approov status
         switch approovResult.status {
         case .success,
@@ -544,7 +544,7 @@ public class ApproovService {
         // Fetch the custom JWT
         let approovResult = Approov.fetchCustomJWTAndWait(payload)
         // Log result of token fetch operation but do not log the value
-        os_log("Approov: fetchCustomJWT: %@", type: .info, Approov.string(from: approovResult.status))
+        os_log("ApproovService: fetchCustomJWT: %@", type: .info, Approov.string(from: approovResult.status))
         // Process the returned Approov status
         switch approovResult.status {
         case .success:
