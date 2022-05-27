@@ -21,6 +21,7 @@ import CommonCrypto
 import Foundation
 import NIO
 import NIOSSL
+import os.log
 
 
 class SecurityFrameworkValidator {
@@ -48,70 +49,65 @@ class SecurityFrameworkValidator {
     // SecurityFrameworkCertificateVerification.swift of the SwiftNIO SSL package
     // (https://github.com/apple/swift-nio-ssl).
     // The code is derived from this release: https://github.com/apple/swift-nio-ssl/archive/refs/tags/2.16.3.zip
-    func validateSecurityFramework(certChain: [NIOSSLCertificate]) -> Bool {
-        do {
-            // Create the list of peer certificates
-            var peerCertificates: [SecCertificate] = []
-            for cert in certChain {
-                let data = try Data(cert.toDERBytes())
-                let newCert: SecCertificate = SecCertificateCreateWithData(nil, data as CFData)!
-                peerCertificates.append(newCert)
-            }
+    func validateSecurityFramework(certChain: [NIOSSLCertificate]) throws -> Bool {
+        // Create the list of peer certificates
+        var peerCertificates: [SecCertificate] = []
+        for cert in certChain {
+            let data = try Data(cert.toDERBytes())
+            let newCert: SecCertificate = SecCertificateCreateWithData(nil, data as CFData)!
+            peerCertificates.append(newCert)
+        }
 
-            // Code derived from performSecurityFrameworkValidation() starts here
-            guard case .default = trustRoots ?? .default else {
-                preconditionFailure("This callback should only be used if we are using the system-default trust.")
-            }
+        // Code derived from performSecurityFrameworkValidation() starts here
+        guard case .default = trustRoots ?? .default else {
+            preconditionFailure("This callback should only be used if we are using the system-default trust.")
+        }
 
-            // This force-unwrap is safe as we must have decided if we're a client or a server before validation.
-            var trust: SecTrust? = nil
-            var result: OSStatus
-            // This is only for TLS clients, so role is always .client, i.e. SSLConnection.role! == .client --> true
-            let policy = SecPolicyCreateSSL(true, expectedHostname as CFString?)
-            result = SecTrustCreateWithCertificates(peerCertificates as CFArray, policy, &trust)
-            guard result == errSecSuccess, let actualTrust = trust else {
+        // This force-unwrap is safe as we must have decided if we're a client or a server before validation.
+        var trust: SecTrust? = nil
+        var result: OSStatus
+        // This is only for TLS clients, so role is always .client, i.e. SSLConnection.role! == .client --> true
+        let policy = SecPolicyCreateSSL(true, expectedHostname as CFString?)
+        result = SecTrustCreateWithCertificates(peerCertificates as CFArray, policy, &trust)
+        guard result == errSecSuccess, let actualTrust = trust else {
+            throw NIOSSLError.unableToValidateCertificate
+        }
+
+        // If there are additional trust roots then we need to add them to the SecTrust as anchors.
+        let additionalAnchorCertificates: [SecCertificate] = try additionalTrustRoots.flatMap { trustRoots -> [NIOSSLCertificate] in
+            guard case .certificates(let certs) = trustRoots else {
+                preconditionFailure("This callback happens on the request path, file-based additional trust roots should be pre-loaded when creating the SSLContext.")
+            }
+            return certs
+        }.map {
+            guard let secCert = SecCertificateCreateWithData(nil, Data(try $0.toDERBytes()) as CFData) else {
+                throw NIOSSLError.failedToLoadCertificate
+            }
+            return secCert
+        }
+        if !additionalAnchorCertificates.isEmpty {
+            // To use additional anchors _and_ the built-in ones we must reenable the built-in ones expicitly.
+            guard SecTrustSetAnchorCertificatesOnly(actualTrust, false) == errSecSuccess else {
+                throw NIOSSLError.failedToLoadCertificate
+            }
+            guard SecTrustSetAnchorCertificates(actualTrust, additionalAnchorCertificates as CFArray) == errSecSuccess else {
+                throw NIOSSLError.failedToLoadCertificate
+            }
+        }
+
+        // Evaluate the trust
+        if #available(iOS 12, macOS 10.14, tvOS 13, watchOS 6, *) {
+            if SecTrustEvaluateWithError(actualTrust, nil) {
+                return true
+            }
+        } else {
+            var result = SecTrustResultType.invalid
+            if SecTrustEvaluate(actualTrust, &result) != errSecSuccess {
                 throw NIOSSLError.unableToValidateCertificate
             }
-
-            // If there are additional trust roots then we need to add them to the SecTrust as anchors.
-            let additionalAnchorCertificates: [SecCertificate] = try additionalTrustRoots.flatMap { trustRoots -> [NIOSSLCertificate] in
-                guard case .certificates(let certs) = trustRoots else {
-                    preconditionFailure("This callback happens on the request path, file-based additional trust roots should be pre-loaded when creating the SSLContext.")
-                }
-                return certs
-            }.map {
-                guard let secCert = SecCertificateCreateWithData(nil, Data(try $0.toDERBytes()) as CFData) else {
-                    throw NIOSSLError.failedToLoadCertificate
-                }
-                return secCert
+            if result == .proceed || result == .unspecified {
+                return true
             }
-            if !additionalAnchorCertificates.isEmpty {
-                // To use additional anchors _and_ the built-in ones we must reenable the built-in ones expicitly.
-                guard SecTrustSetAnchorCertificatesOnly(actualTrust, false) == errSecSuccess else {
-                    throw NIOSSLError.failedToLoadCertificate
-                }
-                guard SecTrustSetAnchorCertificates(actualTrust, additionalAnchorCertificates as CFArray) == errSecSuccess else {
-                    throw NIOSSLError.failedToLoadCertificate
-                }
-            }
-
-            // Evaluate the trust
-            if #available(iOS 12, macOS 10.14, tvOS 13, watchOS 6, *) {
-                if SecTrustEvaluateWithError(actualTrust, nil) {
-                    return true
-                }
-            } else {
-                var result = SecTrustResultType.invalid
-                if SecTrustEvaluate(actualTrust, &result) != errSecSuccess {
-                    throw NIOSSLError.unableToValidateCertificate
-                }
-                if result == .proceed || result == .unspecified {
-                    return true
-                }
-            }
-        } catch {
-            NSLog("Security framework validation error: \(error)")
-            return false
         }
         return false
     }
