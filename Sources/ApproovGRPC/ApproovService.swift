@@ -46,12 +46,15 @@ public enum ApproovError: Error, LocalizedError {
                 let .permanentError(message),
                 let .runtimeError(message):
                 return message
-            case let .rejectionError(message, _, rejectionReasons):
-                var reasons: String = ""
-                if !rejectionReasons.isEmpty {
-                    reasons += ", reasons: " + rejectionReasons
+            case let .rejectionError(message, ARC, rejectionReasons):
+                var info: String = ""
+                if !ARC.isEmpty {
+                    info += ", ARC: " + ARC
                 }
-                return message + reasons
+                if !rejectionReasons.isEmpty {
+                    info += ", reasons: " + rejectionReasons
+                }
+                return message + info
             }
         }
     }
@@ -73,13 +76,20 @@ public class ApproovService {
     private static var approovSDKInitialised = false
 
     /**
-     * Note the initializer function should only ever be called once. Subsequent calls will be ignored
-     * since the ApproovSDK can only be intialized once; if however, an attempt is made to initialize
-     * with a different configuration (config) we throw an ApproovError.configurationError.
-     * If the Approov SDk fails to be initialized for some other reason, an .initializationFailure is raised.
-     * The configuration string is obtained using `approov sdk -getConfigString` or through an Approov onboarding email.
+     * Initializes the ApproovService with an account configuration.
+     *
+     * Note the initializer function should only ever be called once. Subsequent calls will be ignored since the
+     * Approov SDK can only be intialized once; if however, an attempt is made to initialize with a different
+     * configuration we throw an `ApproovError.configurationError`. If the Approov SDK fails to be initialized for some
+     * other reason, an `ApproovError.initializationFailure` is raised.
+     *
+     * @param config the configuration string, or empty for no SDK initialization. The configuration string is obtained
+     *               using `approov sdk -getConfigString` or through an Approov onboarding email.
      */
     public static func initialize(config: String) throws {
+        if config.isEmpty {
+            return
+        }
         try initLock.withLock {
             // Check if we attempt to use a different configString
             if (approovSDKInitialised) {
