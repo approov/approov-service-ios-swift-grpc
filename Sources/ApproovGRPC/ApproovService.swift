@@ -547,10 +547,10 @@ public class ApproovService {
      * if some other error occurs an Approov.permanentError is raised.
      *
      * @param payload is the marshaled JSON object for the claims to be included
-     * @return custom JWT string or nil if an error occurred
+     * @return custom JWT string
      * @throws exception with description of cause
      */
-    public static func fetchCustomJWT(payload: String) throws -> String? {
+    public static func fetchCustomJWT(payload: String) throws -> String {
         // Fetch the custom JWT
         let approovResult = Approov.fetchCustomJWTAndWait(payload)
         // Log result of token fetch operation but do not log the value
