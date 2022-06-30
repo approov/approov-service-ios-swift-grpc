@@ -96,7 +96,7 @@ public class ApproovClientConnection {
     /// provided configuration and `EventLoopGroup`.
     ///
     /// - Important: The caller is responsible for ensuring the provided `configuration` may be used
-    ///   the the `group`.
+    ///   in the `group`.
     public static func usingTLS(
         with configuration: GRPCTLSConfiguration,
         on group: EventLoopGroup
