@@ -3,8 +3,8 @@
 import PackageDescription
 
 let approovSDKVersion = "3.1.0"
-let bitcode = "-bitcode" // "" or "-bitcode"
-let approovSDKChecksum = "f708722e2aa25102d4b92c97959e4c0d7abaa934d0413dd4e5f7a04c04c0410f"
+let bitcode = "" // "" or "-bitcode"
+let approovSDKChecksum = "9514279f8db428f46ecd9c855a89e25f580069e703e2e2940d3aa7a752040232"
 
 let package = Package(
     name: "ApproovGRPC",
