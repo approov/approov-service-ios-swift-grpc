@@ -70,7 +70,7 @@ public class ApproovService {
     fileprivate init(){}
 
     /** Lock to manage intialization */
-    private static let initLock = Lock()
+    private static let initLock = NIOLock()
 
     /** Status of Approov SDK initialisation */
     private static var approovSDKInitialised = false
@@ -117,7 +117,7 @@ public class ApproovService {
     }
 
     /** Lock to manage variable access */
-    private static let stateLock = Lock()
+    private static let stateLock = NIOLock()
 
     /** True if the interceptor should proceed on network failures and not add an Approov token */
     private static var _proceedOnNetworkFail = false;
@@ -256,7 +256,6 @@ public class ApproovService {
      * @throws ApproovError if it is not possible to obtain secure strings for substitution
      */
     public static func updateRequestHeaders(headers: HPACKHeaders, hostname: String) throws -> HPACKHeaders {
-
         // Check if Bind Header is set to a non empty string
         if bindHeader != "" {
             if let aValue = headers.first(name: bindHeader) {
@@ -264,10 +263,18 @@ public class ApproovService {
                 Approov.setDataHashInToken(aValue)
             }
         }
+        
         // Fetch the Approov token
         let result: ApproovTokenFetchResult = Approov.fetchTokenAndWait(hostname)
         os_log("ApproovService: update headers %@: %@", type: .info, hostname, result.loggableToken())
 
+        // Log if a configuration update is received and call fetchConfig to clear the update state
+        if result.isConfigChanged {
+            Approov.fetchConfig()
+            os_log("ApproovService: dynamic configuration update received")
+        }
+        
+        // Handle the Approov token fetch response
         var updatedHeaders: HPACKHeaders = [:]
         switch result.status {
         case .success:

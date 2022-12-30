@@ -30,6 +30,10 @@ class ApproovPinningVerifier {
         0x30, 0x82, 0x01, 0x22, 0x30, 0x0d, 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x01, 0x05,
         0x00, 0x03, 0x82, 0x01, 0x0f, 0x00
     ]
+    private static let rsa3072SPKIHeader:[UInt8] = [
+        0x30, 0x82, 0x01, 0xa2, 0x30, 0x0d, 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x01, 0x05,
+        0x00, 0x03, 0x82, 0x01, 0x8f, 0x00
+    ]
     private static let rsa4096SPKIHeader:[UInt8] = [
         0x30, 0x82, 0x02, 0x22, 0x30, 0x0d, 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x01, 0x05,
         0x00, 0x03, 0x82, 0x02, 0x0f, 0x00
@@ -47,6 +51,7 @@ class ApproovPinningVerifier {
     private static let spkiHeaders: [String:[Int:Data]] = [
         kSecAttrKeyTypeRSA as String:[
             2048:Data(rsa2048SPKIHeader),
+            3072:Data(rsa3072SPKIHeader),
             4096:Data(rsa4096SPKIHeader)
         ],
         kSecAttrKeyTypeECSECPrimeRandom as String:[
@@ -189,62 +194,70 @@ class ApproovPinningVerifier {
      * @param certChain in which to look for a match to an Approov pin
      */
     func hasApproovPinMatch(host: String, certChain: [NIOSSLCertificate]) throws -> Bool {
-        // ensure pins are refreshed eventually
+        // Ensure pins are refreshed eventually
         ApproovService.prefetch()
+        
         // Get the certificate chain count
         for cert in certChain {
             // Get the current certificate from the chain
             let data = try Data(cert.toDERBytes())
             let newCert: SecCertificate = SecCertificateCreateWithData(nil, data as CFData)!
-            guard let publicKeyInfo = publicKeyInfoOfCertificate(certificate: newCert) else {
-                // Throw to indicate we could not parse SPKI header
-                throw ApproovError.pinningError(message: "Error parsing SPKI header for host \(host). " +
-                    "Unsupported certificate type, SPKI header cannot be created")
-            }
+            if let publicKeyInfo = publicKeyInfoOfCertificate(certificate: newCert) {
+                // Compute the SHA-256 hash of the public key info
+                let publicKeyHash = sha256(data: publicKeyInfo)
 
-            // Compute the SHA-256 hash of the public key info
-            let publicKeyHash = sha256(data: publicKeyInfo)
-
-            // Check that the hash is the same as at least one of the pins
-            guard let approovCertHashes = Approov.getPins("public-key-sha256") else {
-                throw ApproovError.pinningError(message: "Approov SDK getPins() call failed")
-            }
-            // Get the receivers host
-            if var certHashesBase64 = approovCertHashes[host] {
-                // Check whether we have pins defined for this host
-                if certHashesBase64.count == 0 {
-                    // There are no pins defined for this host, check for managed trust roots
-                    if let managedTrustRootHashesBase64 = approovCertHashes["*"] {
-                        // Managed trust roots are available, so use these
-                        certHashesBase64 = managedTrustRootHashesBase64
-                    } else {
-                        // There are no managed trust roots either, accept connection. We do not pin connections
-                        // where no pins are explicitly set for the host.
-                        return true
-                    }
+                // Check that the hash is the same as at least one of the pins
+                guard let approovCertHashes = Approov.getPins("public-key-sha256") else {
+                    throw ApproovError.pinningError(message: "Approov SDK getPins() call failed")
                 }
-
-                // We have one or more cert hashes matching the receiver's host, compare them
-                for certHashBase64 in certHashesBase64 {
-                    let certHash = Data(base64Encoded: certHashBase64)
-                    if publicKeyHash == certHash {
-                        return true
+                
+                // Get the receivers host
+                if var certHashesBase64 = approovCertHashes[host] {
+                    // Check whether we have pins defined for this host
+                    if certHashesBase64.count == 0 {
+                        // There are no pins defined for this host, check for managed trust roots
+                        if let managedTrustRootHashesBase64 = approovCertHashes["*"] {
+                            // Managed trust roots are available, so use these
+                            certHashesBase64 = managedTrustRootHashesBase64
+                        } else {
+                            // There are no managed trust roots either, accept connection. We do not pin connections
+                            // where no pins are explicitly set for the host.
+                            os_log("ApproovService: Pin verification %@ empty pins", host)
+                            return true
+                        }
                     }
+
+                    // We have one or more cert hashes matching the receiver's host, compare them
+                    for certHashBase64 in certHashesBase64 {
+                        let certHash = Data(base64Encoded: certHashBase64)
+                        if publicKeyHash == certHash {
+                            os_log("ApproovService: Matched pin %@ for %@ from %d pins", certHashBase64, host, certHashesBase64.count)
+                            return true
+                        }
+                    }
+                } else {
+                    // Host is not pinned
+                    os_log("ApproovService: Pin verification %@ unpinned", host)
+                    return true
                 }
             } else {
-                // Host is not pinned
-                return true
+                os_log("ApproovService: Skipping pin checking for unknown certificate type")
             }
         }
+        
         // No match in current set of pins from Approov SDK and certificate chain seen during TLS handshake
         os_log("ApproovService: Pinning rejection for %@", type: .error, host)
         return false
     }
 
     /**
-     * Gets a certificate's subject public key info (SPKI)
+     * Gets a certificate's subject public key info (SPKI).
+     *
+     *@param certiificate is the SecCertificate being verified
+     *@return the public key for the cerrtificate ot nil if there was a problem
      */
     func publicKeyInfoOfCertificate(certificate: SecCertificate) -> Data? {
+        // get the public key of the certificate
         var publicKey: SecKey?
         if #available(iOS 12.0, *) {
             publicKey = SecCertificateCopyKey(certificate)
@@ -258,6 +271,7 @@ class ApproovPinningVerifier {
             if SecTrustCreateWithCertificates(certificate, secPolicy, &secTrust) != errSecSuccess {
                 return nil
             }
+            
             // get a public key reference for the certificate from the trust
             var secTrustResultType = SecTrustResultType.invalid
             if SecTrustEvaluate(secTrust!, &secTrustResultType) != errSecSuccess {
@@ -268,10 +282,12 @@ class ApproovPinningVerifier {
         if publicKey == nil {
             return nil
         }
+        
         // get the SPKI header depending on the public key's type and size
         guard var spkiHeader = publicKeyInfoHeaderForKey(publicKey: publicKey!) else {
             return nil
         }
+        
         // combine the public key header and the public key data to form the public key info
         guard let publicKeyData = SecKeyCopyExternalRepresentation(publicKey!, nil) else {
             return nil
@@ -281,7 +297,10 @@ class ApproovPinningVerifier {
     }
 
     /**
-     * Gets the subject public key info (SPKI) header depending on a public key's type and size
+     * Gets the subject public key info (SPKI) header depending on a public key's type and size.
+     *
+     *@param publicKey is the public key whose SPKI header is being obtained
+     *@return SPKI header data or nil if there was a problem
      */
     func publicKeyInfoHeaderForKey(publicKey: SecKey) -> Data? {
         guard let publicKeyAttributes = SecKeyCopyAttributes(publicKey) else {
@@ -289,7 +308,7 @@ class ApproovPinningVerifier {
         }
         if let keyType = (publicKeyAttributes as NSDictionary).value(forKey: kSecAttrKeyType as String) {
             if let keyLength = (publicKeyAttributes as NSDictionary).value(forKey: kSecAttrKeySizeInBits as String) {
-                // Find the header
+                // Find the SPKI header
                 if let spkiHeader:Data = ApproovPinningVerifier.spkiHeaders[keyType as! String]?[keyLength as! Int] {
                     return spkiHeader
                 }
@@ -299,14 +318,16 @@ class ApproovPinningVerifier {
     }
 
     /**
-     * SHA256 of given input bytes
+     * SHA256 of given input bytes.
+     *
+     *@param data to be hashed
+     *@return the SHA256 of the data
      */
-    func sha256(data : Data) -> Data {
+    func sha256(data: Data) -> Data {
         var hash = [UInt8](repeating: 0, count: Int(CC_SHA256_DIGEST_LENGTH))
         data.withUnsafeBytes {
             _ = CC_SHA256($0.baseAddress, CC_LONG(data.count), &hash)
         }
         return Data(hash)
     }
-
 }
