@@ -78,6 +78,7 @@ class ApproovPinningVerifier {
     /**
      * Verify pinning by evaluating the optional custom verification callback first before checking Approov pinning.
      * If an optional custom verifier is set, this *must* pass for the overall verification to be sucessful.
+     *
      * @param host for which to check pinning
      * @param certChain for which to check whether it contains a pinned certificate
      */
@@ -108,6 +109,7 @@ class ApproovPinningVerifier {
     /**
      * Verify Approov pinning. This includes a validation of the security framework as NIOSSL would perform in the
      * absence of a custom verification callback.
+     *
      * @param host for which to check pinning
      * @param certChain in which to look for a match to an Approov pin
      */
@@ -188,10 +190,11 @@ class ApproovPinningVerifier {
     }
 
     /**
-     * Checks whether a certificate chain contains a match to an Approov pin
+     * Checks whether a certificate chain contains a match to an Approov pin.
      *
      * @param host for which to check pinning
      * @param certChain in which to look for a match to an Approov pin
+     * @return Bool true if an Approov pin match was made
      */
     func hasApproovPinMatch(host: String, certChain: [NIOSSLCertificate]) throws -> Bool {
         // Ensure pins are refreshed eventually
@@ -253,8 +256,8 @@ class ApproovPinningVerifier {
     /**
      * Gets a certificate's subject public key info (SPKI).
      *
-     *@param certiificate is the SecCertificate being verified
-     *@return the public key for the cerrtificate ot nil if there was a problem
+     * @param certiificate is the SecCertificate being verified
+     * @return the public key for the cerrtificate ot nil if there was a problem
      */
     func publicKeyInfoOfCertificate(certificate: SecCertificate) -> Data? {
         // get the public key of the certificate
@@ -299,8 +302,8 @@ class ApproovPinningVerifier {
     /**
      * Gets the subject public key info (SPKI) header depending on a public key's type and size.
      *
-     *@param publicKey is the public key whose SPKI header is being obtained
-     *@return SPKI header data or nil if there was a problem
+     * @param publicKey is the public key whose SPKI header is being obtained
+     * @return SPKI header data or nil if there was a problem
      */
     func publicKeyInfoHeaderForKey(publicKey: SecKey) -> Data? {
         guard let publicKeyAttributes = SecKeyCopyAttributes(publicKey) else {
@@ -320,8 +323,8 @@ class ApproovPinningVerifier {
     /**
      * SHA256 of given input bytes.
      *
-     *@param data to be hashed
-     *@return the SHA256 of the data
+     * @param data to be hashed
+     * @return the SHA256 of the data
      */
     func sha256(data: Data) -> Data {
         var hash = [UInt8](repeating: 0, count: Int(CC_SHA256_DIGEST_LENGTH))
