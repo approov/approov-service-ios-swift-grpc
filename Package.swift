@@ -2,13 +2,12 @@
 // The swift-tools-version declares the minimum version of Swift required to build this package.
 import PackageDescription
 
-let approovSDKVersion = "3.1.0"
-let bitcode = "" // "" or "-bitcode"
-let approovSDKChecksum = "9514279f8db428f46ecd9c855a89e25f580069e703e2e2940d3aa7a752040232"
+let approovSDKVersion = "3.2.0"
+let approovSDKChecksum = "c851f845bacfa3c978d12dbf85d7688a3b93e8e25d01f03784fdcb15b8d2beb0"
 
 let package = Package(
     name: "ApproovGRPC",
-    platforms: [.iOS(.v10)],
+    platforms: [.iOS(.v12)],
     products: [
         // Products define the executables and libraries a package produces, and make them visible to other packages.
         .library(
@@ -27,8 +26,7 @@ let package = Package(
         ),
         .binaryTarget(
             name: "Approov",
-            url: "https://github.com/approov/approov-ios-sdk" + bitcode + "/releases/download/" + approovSDKVersion +
-                "/Approov.xcframework.zip",
+            url: "https://github.com/approov/approov-ios-sdk/releases/download/" + approovSDKVersion + "/Approov.xcframework.zip",
             checksum : approovSDKChecksum
         )
     ]

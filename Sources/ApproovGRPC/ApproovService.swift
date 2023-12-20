@@ -226,6 +226,21 @@ public class ApproovService {
     }
 
     /**
+     * Sets a development key indicating that the app is a development version and it should
+     * pass attestation even if the app is not registered or it is running on an emulator. The
+     * development key value can be rotated at any point in the account if a version of the app
+     * containing the development key is accidentally released. This is primarily
+     * used for situations where the app package must be modified or resigned in
+     * some way as part of the testing process.
+     *
+     * @param devKey is the development key to be used
+     */
+    public static func setDevKey(devKey: String) {
+        Approov.setDevKey(devKey)
+        os_log("ApproovService: setDevKey", type: .debug)
+    }
+
+    /**
      * Allows token prefetch operation to be performed as early as possible. This permits a token to be available while
      * an application might be loading resources or is awaiting user input. Since the initial token fetch is the most
      * expensive the prefetch can hide the most latency.
@@ -428,8 +443,8 @@ public class ApproovService {
      * @param data is the data to be hashed and set in the token
      */
     public static func setDataHashInToken(data: String) {
-        Approov.setDataHashInToken(data);
-        os_log("ApproovService: setDataHashInToken", type: .debug);
+        Approov.setDataHashInToken(data)
+        os_log("ApproovService: setDataHashInToken", type: .debug)
     }
 
     /**
@@ -481,7 +496,7 @@ public class ApproovService {
      */
     public static func getMessageSignature(message: String) throws -> String {
         if let signature: String = Approov.getMessageSignature(message) {
-            os_log("ApproovService: getMessageSignature", type: .debug);
+            os_log("ApproovService: getMessageSignature", type: .debug)
             return signature
         }
         throw ApproovError.permanentError(message: "getMessageSignature: no signature available");
