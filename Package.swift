@@ -2,8 +2,8 @@
 // The swift-tools-version declares the minimum version of Swift required to build this package.
 import PackageDescription
 
-let approovSDKVersion = "3.3.0"
-let approovSDKChecksum = "8c8737a2cea95e7101f6e05114c37f3f45a600abd196aca05d2c58edb90634dd"
+let approovSDKVersion = "3.5.0"
+let approovSDKChecksum = "c2902922d07df7cdc74b4b5ec70353bfc88339baee7dd94556170c565731da01"
 
 let package = Package(
     name: "ApproovGRPC",
