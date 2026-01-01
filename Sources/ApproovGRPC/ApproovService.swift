@@ -636,4 +636,44 @@ public class ApproovService {
         }
     }
 
+    /**
+     * Gets the last ARC (Attestation Response Code) code.
+     * NOTE: You MUST only call this method upon succesfull attestation completion. Any networking
+     * errors returned from the service layer will not return a meaningful ARC code (empty string) if the method is called!!!
+     * @return String of the last ARC or empty string if there was none
+     */
+    public static func getLastARC() -> String {
+        // We have to get the current config and obtain one protected API endpoint at least
+        // get the dynamic pins from Approov
+        guard let approovPins = Approov.getPins("public-key-sha256") else {
+            os_log("ApproovService: no host pinning information available", type: .error)
+            return ""
+        }
+        // The approovPins contains a map of hostnames to pin strings.  We need to skip the '*' entry (Managed Trust Roots),
+        // and use another hostname if available.
+            if let hostname = approovPins.keys.first(where: { $0 != "*" }) {
+                let result = Approov.fetchTokenAndWait(hostname)
+                // Check if a token was fetched successfully and return its arc code
+                if result.token.count > 0 {
+                    return result.arc
+                }
+            }
+        os_log("ApproovService: ARC code unavailable", type: .info)
+        return ""
+    }
+
+    /**
+    * Sets an install attributes token to be sent to the server and associated with this particular
+    * app installation for future Approov token fetches. The token must be signed, within its
+    * expiry time and bound to the correct device ID for it to be accepted by the server.
+    * Calling this method ensures that the next call to fetch an Approov
+    * token will not use a cached version, so that this information can be transmitted to the server.
+    *
+    * @param attrs is the signed JWT holding the new install attributes
+    */
+    public static func setInstallAttributes(attrs: String) {
+        Approov.setInstallAttributes(attrs)
+        os_log("ApproovService: setInstallAttributes", type: .info)
+    }
+
 }
