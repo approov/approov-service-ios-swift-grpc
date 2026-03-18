@@ -677,7 +677,7 @@ public class ApproovService {
     * @param attrs is the signed JWT holding the new install attributes
     */
     public static func setInstallAttributes(attrs: String) {
-        Approov.setInstallAttributes(attrs)
+        Approov.setInstallAttrsInToken(attrs)
         os_log("ApproovService: setInstallAttributes", type: .info)
     }
 
