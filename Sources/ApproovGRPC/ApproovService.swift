@@ -85,34 +85,39 @@ public class ApproovService {
      *
      * @param config the configuration string, or empty for no SDK initialization. The configuration string is obtained
      *               using `approov sdk -getConfigString` or through an Approov onboarding email.
+     * @param comment is an optional comment to be passed to the SDK.
      */
-    public static func initialize(config: String) throws {
-        if config.isEmpty {
-            return
-        }
+    public static func initialize(config: String, comment: String? = nil) throws {
         try initLock.withLock {
             // Check if we attempt to use a different configString
-            if (approovSDKInitialised) {
-                if (config != approovConfigString) {
+            if approovSDKInitialised && ((comment?.hasPrefix("reinit")) == nil) {
+                if config != approovConfigString {
                     // Throw exception indicating we are attempting to use different config
                     let errorMessage = "Attempting to initialize with different configuration"
                     os_log("ApproovService: %@", type: .error, errorMessage)
                     throw ApproovError.configurationError(message: errorMessage)
                 }
+                os_log("ApproovService: Ignoring multiple ApproovService layer initializations with the same config")
                 return
             }
             // Initialize Approov SDK
             do {
-                try Approov.initialize(config, updateConfig: "auto", comment: nil)
-                approovConfigString = config
-                approovSDKInitialised = true
-                Approov.setUserProperty("approov-service-grpc")
-            } catch let error {
-                // Log error and throw exception
-                let errorMessage = "Error initializing Approov SDK: \(error.localizedDescription)"
-                os_log("ApproovService: %@", type: .error, errorMessage)
-                throw ApproovError.initializationFailure(message: errorMessage)
+                if !config.isEmpty {
+                    try Approov.initialize(config, updateConfig: "auto", comment: comment)
+                }
+            } catch {
+                let nsError = error as NSError
+                if nsError.code == 0, nsError.domain == "Foundation._GenericObjCError" {
+                    os_log("ApproovService: Ignoring initialization error in Approov SDK: %@", type: .error, nsError.localizedDescription)
+                } else {
+                    let errorMessage = "Error initializing Approov SDK: \(nsError.localizedDescription)"
+                    os_log("ApproovService: %@", type: .error, errorMessage)
+                    throw ApproovError.initializationFailure(message: errorMessage)
+                }
             }
+            approovConfigString = config
+            approovSDKInitialised = true
+            Approov.setUserProperty("approov-service-grpc")
         }
     }
 
