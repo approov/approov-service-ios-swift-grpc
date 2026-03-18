@@ -37,8 +37,7 @@ let package = Package(
                 .product(name: "GRPC", package: "grpc-swift"),
                 .product(name: "Logging", package: "swift-log")
             ],
-            path: "Sources/ApproovGRPC",
-            exclude: ["README.md", "LICENSE"]
+            path: "Sources/ApproovGRPC"
         )
     ]
 )
