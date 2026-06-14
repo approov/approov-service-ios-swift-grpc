@@ -60,16 +60,24 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
     // MARK: - §1 Initialization
 
     func testInitializeIgnoresSameConfigAndRejectsDifferentConfig() throws {
+        // §1 Same Config Re-initialization: forwarded to the SDK which returns false (already
+        // initialized); the service layer treats this as success and remains fully initialized.
         XCTAssertNoThrow(try ApproovService.initialize(config: validInitialConfig, comment: nil))
+        XCTAssertTrue(ApproovService.isInitialized())
+        XCTAssertTrue(ApproovService.isApproovEnabled())
 
+        // §1 Different Non-empty Config Re-initialization: forwarded to the SDK which rejects it.
+        // The native rejection is surfaced as an initializationFailure and the service-layer state
+        // is left completely unchanged (still protected with the original config).
         let differentConfig = "#cb-other#mAxOF0ekJUOC36J5XWmVmVipOcUoEdMjhPSp2FVtyTo="
         XCTAssertThrowsError(try ApproovService.initialize(config: differentConfig, comment: nil)) { error in
-            guard case let ApproovError.configurationError(message) = error else {
-                return XCTFail("Expected configurationError, got \(error)")
+            guard case ApproovError.initializationFailure = error else {
+                return XCTFail("Expected initializationFailure, got \(error)")
             }
-            XCTAssertTrue(message.contains("Attempting to initialize with different configuration"),
-                          "Unexpected message: \(message)")
         }
+        XCTAssertTrue(ApproovService.isInitialized())
+        XCTAssertTrue(ApproovService.isApproovEnabled())
+        XCTAssertEqual(ApproovService.approovConfigString, validInitialConfig)
     }
 
     func testInitializeWithEmptyConfigBypassesTokenInjection() throws {

@@ -104,10 +104,14 @@ public class ApproovService {
     /**
      * Initializes the ApproovService with an account configuration.
      *
-     * Note the initializer function should only ever be called once. Subsequent calls will be ignored since the
-     * Approov SDK can only be intialized once; if however, an attempt is made to initialize with a different
-     * configuration we throw an `ApproovError.configurationError`. If the Approov SDK fails to be initialized for some
-     * other reason, an `ApproovError.initializationFailure` is raised.
+     * Per TESTING_REQUIREMENTS §1 the service layer never short-circuits an initialization call
+     * carrying a non-empty config based on its own internal state: every non-empty config (including
+     * the same config with a different comment, or a different config) is forwarded directly to the
+     * native Approov SDK. If the SDK rejects the call the failure is surfaced and the service-layer
+     * state is left completely unchanged. If the SDK confirms success (or we are in empty-config
+     * bypass mode), the service-layer state is reset and re-applied — including resetting the custom
+     * service mutator to the default. An empty config after a valid config is the only case that is
+     * ignored without being forwarded.
      *
      * @param config the configuration string, or empty for no SDK initialization. The configuration string is obtained
      *               using `approov sdk -getConfigString` or through an Approov onboarding email.
@@ -115,44 +119,52 @@ public class ApproovService {
      */
     public static func initialize(config: String, comment: String? = nil) throws {
         try initLock.withLock {
-            // Check if we attempt to use a different configString
-            if approovSDKInitialised && ((comment?.hasPrefix("reinit")) == nil) {
-                if let oldConfig = approovConfigString, !oldConfig.isEmpty {
-                    if config != oldConfig {
-                        // Throw exception indicating we are attempting to use different config
-                        let errorMessage = "Attempting to initialize with different configuration"
-                        os_log("ApproovService: %@", type: .error, errorMessage)
-                        throw ApproovError.configurationError(message: errorMessage)
-                    }
-                    os_log("ApproovService: Ignoring multiple ApproovService layer initializations with the same config")
-                    return
-                } else if config.isEmpty {
-                    // Already initialized with empty config, and new config is also empty
-                    os_log("ApproovService: Ignoring multiple ApproovService layer initializations with the same config")
-                    return
+            let isEnabled = !config.isEmpty
+
+            // §1 Empty Configuration after Valid Configuration: once initialized with a valid
+            // non-empty config, a later empty-config init is ignored and NOT forwarded to the SDK.
+            if approovSDKInitialised && config.isEmpty && !((approovConfigString ?? "").isEmpty) {
+                if loggingLevel >= .info {
+                    os_log("ApproovService already initialized with a valid config; ignoring empty configuration", type: .info)
                 }
+                return
             }
-            // Initialize Approov SDK
-            do {
-                if !config.isEmpty {
+
+            // §1 Configuration Options and Forwarding Requirement: forward all non-empty configs to
+            // the native SDK without any internal short-circuit. State is only modified after the SDK
+            // confirms success, preserving the current operating mode (protected or bypass) on failure.
+            if isEnabled {
+                do {
                     try Approov.initialize(config, updateConfig: "auto", comment: comment)
-                }
-            } catch {
-                let nsError = error as NSError
-                if nsError.code == 0, nsError.domain == "Foundation._GenericObjCError" {
-                    os_log("ApproovService: Ignoring initialization error in Approov SDK: %@", type: .error, nsError.localizedDescription)
-                } else {
-                    let errorMessage = "Error initializing Approov SDK: \(nsError.localizedDescription)"
-                    os_log("ApproovService: %@", type: .error, errorMessage)
-                    throw ApproovError.initializationFailure(message: errorMessage)
+                    if loggingLevel >= .info {
+                        os_log("ApproovService: Approov SDK initialized", type: .info)
+                    }
+                } catch {
+                    let nsError = error as NSError
+                    if nsError.code == 0, nsError.domain == "Foundation._GenericObjCError" {
+                        // §1 Same Config Re-initialization: the native SDK returned false (already
+                        // initialized with the same config). Swift bridges this BOOL=NO into a thrown
+                        // Foundation._GenericObjCError(code: 0); treat it as success.
+                        if loggingLevel >= .info {
+                            os_log("ApproovService: Approov SDK already initialized", type: .info)
+                        }
+                    } else {
+                        // §1 Different Non-empty Config Re-initialization / General Initialization
+                        // Failure: surface the failure and leave the service-layer state unchanged.
+                        let errorMessage = "Error initializing Approov SDK: \(nsError.localizedDescription)"
+                        os_log("ApproovService: %@", type: .error, errorMessage)
+                        throw ApproovError.initializationFailure(message: errorMessage)
+                    }
                 }
             }
-            approovConfigString = config
 
             // §1 Service-Layer State Only Updated On Success: now that the platform SDK has
             // confirmed success (or we are in empty-config bypass mode), reset and re-apply the
             // service-layer state. This includes the §1 "Service Mutator Reset" requirement:
             // the custom service mutator is reset to the default on every successful initialization.
+            approovSDKInitialised = false
+            approovConfigString = config
+
             stateLock.withLock {
                 _proceedOnNetworkFail = false
                 _bindHeader = ""
@@ -166,7 +178,7 @@ public class ApproovService {
             }
 
             approovSDKInitialised = true
-            if !config.isEmpty {
+            if isEnabled {
                 Approov.setUserProperty("approov-service-grpc/dev")
             }
         }
@@ -296,17 +308,16 @@ public class ApproovService {
         }
     }
 
-    /** Initialization configuration string. NOTE this must only ever be written to ONCE since Approov SDK can only
-     * be initialized once */
+    /** Initialization configuration string used for the current initialization. This is committed
+     * on every successful init (including same-config reinit and bypass→protected upgrade) so the
+     * service-layer state reflects the most recently accepted configuration. */
     private static var _approovConfigString: String?
 
     // Public setter/getter for configuration
     static var approovConfigString: String? {
         set (newValue) {
             stateLock.withLock {
-                if (_approovConfigString == nil || _approovConfigString == "") {
-                    _approovConfigString = newValue
-                }
+                _approovConfigString = newValue
             }
         }
         get {
