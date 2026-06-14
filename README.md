@@ -30,7 +30,7 @@ import ApproovGRPC
 import GRPC
 
 // Initialize the Approov service
-try! ApproovService.initialize("<enter-your-config-string-here>")
+try! ApproovService.initialize(config: "<enter-your-config-string-here>")
 
 // Use ApproovClientConnection to construct the builder
 let builder = ApproovClientConnection.usingTLSBackedByNIOSSL(on: group)

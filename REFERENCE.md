@@ -29,7 +29,7 @@ An optional `comment` parameter is forwarded directly to the native SDK. The `co
 try ApproovService.initialize(config: "<config-string>", comment: "options:no-install-key")
 ```
 
-If an attempt is made to initialize with a **different** non-empty config, an `ApproovError.configurationError` is raised. Passing an empty config string bypasses Approov SDK initialization, operating in bypass mode. Each successful `initialize(...)` resets the active service mutator to the default.
+If an attempt is made to initialize with a **different** non-empty config, an `ApproovError.initializationFailure` is raised. Passing an empty config string bypasses Approov SDK initialization, operating in bypass mode. Each successful `initialize(...)` resets the active service mutator to the default.
 
 ### isInitialized()
 Returns whether the service layer has been initialized. Returns `true` even for empty-config bypass mode.

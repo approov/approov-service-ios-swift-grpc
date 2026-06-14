@@ -360,7 +360,7 @@ public class ApproovDefaultMessageSigning: ApproovServiceMutator, CustomStringCo
 /**
  * Factory class for creating pre-request `SignatureParameters` with configurable settings.
  */
-public class SignatureParametersFactory {
+open class SignatureParametersFactory {
     private var baseParameters: SignatureParameters?
     private var bodyDigestAlgorithm: String?
     private var bodyDigestRequired: Bool = false
@@ -441,7 +441,7 @@ public class SignatureParametersFactory {
         return self
     }
 
-    func buildSignatureParameters(provider: ApproovGRPCComponentProvider, changes: ApproovRequestMutations) throws -> SignatureParameters {
+    open func buildSignatureParameters(provider: ApproovGRPCComponentProvider, changes: ApproovRequestMutations) throws -> SignatureParameters {
         var requestParameters: SignatureParameters
         if baseParameters == nil {
             requestParameters = SignatureParameters()
@@ -501,11 +501,11 @@ public class SignatureParametersFactory {
  * available from the interceptor) is the RPC path `/package.Service/Method`. There is no query and no
  * accessible body. Fields are read from the request metadata (`HPACKHeaders`).
  */
-class ApproovGRPCComponentProvider: ComponentProvider {
+public class ApproovGRPCComponentProvider: ComponentProvider {
 
     private var request: ApproovRequest
 
-    init(request: ApproovRequest) {
+    public init(request: ApproovRequest) {
         self.request = request
     }
 

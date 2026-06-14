@@ -242,12 +242,18 @@ public extension ApproovServiceMutator {
     func handleInterceptorShouldProcessRequest(_ request: ApproovRequest) throws -> Bool {
         // gRPC has no natural request URL at the interceptor layer, so exclusion regexes are
         // matched against the request URL string we can reconstruct: the path if present is
-        // appended to "https://<hostname>", otherwise the bare hostname is used.
+        // appended to "https://<hostname>", otherwise the hostname (normalized with https:// scheme if missing) is used.
+        let hostname = request.hostname
+        let lowerHostname = hostname.lowercased()
+        let baseHostname = lowerHostname.hasPrefix("http://") || lowerHostname.hasPrefix("https://")
+            ? hostname
+            : "https://" + hostname
+
         let urlString: String
         if let path = request.path, !path.isEmpty {
-            urlString = "https://" + request.hostname + path
+            urlString = baseHostname + path
         } else {
-            urlString = request.hostname
+            urlString = baseHostname
         }
         let urlStringRange = NSRange(urlString.startIndex..<urlString.endIndex, in: urlString)
         for (_, regex) in ApproovService.getExclusionURLRegexs() {

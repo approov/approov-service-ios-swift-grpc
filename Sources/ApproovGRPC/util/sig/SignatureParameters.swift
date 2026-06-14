@@ -24,7 +24,10 @@ public class SignatureParameters: CustomStringConvertible {
     /**
      * Default constructor creates an empty SignatureParameters ready to be populated.
      */
-    init() {
+    /**
+     * Default constructor creates an empty SignatureParameters ready to be populated.
+     */
+    public init() {
         self.componentIdentifiers = []
         self.componentParameters = [:]
     }
@@ -35,7 +38,7 @@ public class SignatureParameters: CustomStringConvertible {
      *
      * @param base
      */
-    init(base: SignatureParameters) {
+    public init(base: SignatureParameters) {
         self.componentIdentifiers = base.componentIdentifiers // Copy the array
         self.componentParameters = base.componentParameters // Copy the dictionary
     }
@@ -43,14 +46,14 @@ public class SignatureParameters: CustomStringConvertible {
     /**
      * @return the componentIdentifiers
      */
-    func getComponentIdentifiers() -> [StringItem] {
+    public func getComponentIdentifiers() -> [StringItem] {
         return componentIdentifiers
     }
 
     /**
      * @return the parameters
      */
-    func getParameters() -> OrderedMap<String, Any> {
+    public func getParameters() -> OrderedMap<String, Any> {
         return componentParameters
     }
 
@@ -58,7 +61,7 @@ public class SignatureParameters: CustomStringConvertible {
      * @param parameters the parameters to set
      */
     @discardableResult
-    func setParameters(_ parameters: OrderedMap<String, Any>) -> SignatureParameters {
+    public func setParameters(_ parameters: OrderedMap<String, Any>) -> SignatureParameters {
         self.componentParameters = parameters
         return self
     }
@@ -68,7 +71,7 @@ public class SignatureParameters: CustomStringConvertible {
      *
      * @return true is debug mode is on; false otherwise
      */
-    func isDebugMode() -> Bool {
+    public func isDebugMode() -> Bool {
         return debugMode
     }
 
@@ -77,14 +80,14 @@ public class SignatureParameters: CustomStringConvertible {
      *
      * @param debugMode true to enable; false to disable
      */
-    func setDebugMode(_ debugMode: Bool) {
+    public func setDebugMode(_ debugMode: Bool) {
         self.debugMode = debugMode
     }
 
     /**
      * @return the alg
      */
-    func getAlg() -> String? {
+    public func getAlg() -> String? {
         return componentParameters[Self.ALG] as? String
     }
 
@@ -92,7 +95,7 @@ public class SignatureParameters: CustomStringConvertible {
      * @param alg the alg to set
      */
     @discardableResult
-    func setAlg(_ alg: String) -> SignatureParameters {
+    public func setAlg(_ alg: String) -> SignatureParameters {
         componentParameters[Self.ALG] = alg
         return self
     }
@@ -100,7 +103,7 @@ public class SignatureParameters: CustomStringConvertible {
     /**
      * @return the created-at time in seconds since epoch
      */
-    func getCreated() -> Int64? {
+    public func getCreated() -> Int64? {
         return componentParameters[Self.CREATED] as? Int64
     }
 
@@ -108,7 +111,7 @@ public class SignatureParameters: CustomStringConvertible {
      * @param created the created-at time to set
      */
     @discardableResult
-    func setCreated(_ created: Int64) -> SignatureParameters {
+    public func setCreated(_ created: Int64) -> SignatureParameters {
         componentParameters[Self.CREATED] = created
         return self
     }
@@ -116,7 +119,7 @@ public class SignatureParameters: CustomStringConvertible {
     /**
      * @return the expires-at time in seconds since epoch
      */
-    func getExpires() -> Int64? {
+    public func getExpires() -> Int64? {
         return componentParameters[Self.EXPIRES] as? Int64
     }
 
@@ -124,7 +127,7 @@ public class SignatureParameters: CustomStringConvertible {
      * @param expires the expires-at time to set
      */
     @discardableResult
-    func setExpires(_ expires: Int64) -> SignatureParameters {
+    public func setExpires(_ expires: Int64) -> SignatureParameters {
         componentParameters[Self.EXPIRES] = expires
         return self
     }
@@ -132,7 +135,7 @@ public class SignatureParameters: CustomStringConvertible {
     /**
      * @param expires the expires to set
      */
-    func getKeyid() -> String? {
+    public func getKeyid() -> String? {
         return componentParameters[Self.KEYID] as? String
     }
 
@@ -140,7 +143,7 @@ public class SignatureParameters: CustomStringConvertible {
      * @param keyid the keyid to set
      */
     @discardableResult
-    func setKeyid(_ keyid: String) -> SignatureParameters {
+    public func setKeyid(_ keyid: String) -> SignatureParameters {
         componentParameters[Self.KEYID] = keyid
         return self
     }
@@ -148,7 +151,7 @@ public class SignatureParameters: CustomStringConvertible {
     /**
      * @return the nonce
      */
-    func getNonce() -> String? {
+    public func getNonce() -> String? {
         return componentParameters[Self.NONCE] as? String
     }
 
@@ -156,7 +159,7 @@ public class SignatureParameters: CustomStringConvertible {
      * @param nonce the nonce to set
      */
     @discardableResult
-    func setNonce(_ nonce: String) -> SignatureParameters {
+    public func setNonce(_ nonce: String) -> SignatureParameters {
         componentParameters[Self.NONCE] = nonce
         return self
     }
@@ -164,7 +167,7 @@ public class SignatureParameters: CustomStringConvertible {
     /**
      * @return the tag
      */
-    func getTag() -> String? {
+    public func getTag() -> String? {
         return componentParameters[Self.TAG] as? String
     }
 
@@ -172,7 +175,7 @@ public class SignatureParameters: CustomStringConvertible {
      * @param tag the tag to set
      */
     @discardableResult
-    func setTag(_ tag: String) -> SignatureParameters {
+    public func setTag(_ tag: String) -> SignatureParameters {
         componentParameters[Self.TAG] = tag
         return self
     }
@@ -180,11 +183,11 @@ public class SignatureParameters: CustomStringConvertible {
     /**
      * @param key the key for which to get the custom parameter value
      */
-    func getCustomParameter(_ key: String) -> Any? {
+    public func getCustomParameter(_ key: String) -> Any? {
         return componentParameters[key]
     }
 
-    enum SignatureParametersError: Error {
+    public enum SignatureParametersError: Error {
         case invalidType(key: String, expectedType: String)
         case encodingFailed(description: String)
     }
@@ -194,7 +197,7 @@ public class SignatureParameters: CustomStringConvertible {
      * @param value the value to set for the custom parameter
      */
     @discardableResult
-    func setCustomParameter(_ key: String, value: Any) throws -> SignatureParameters {
+    public func setCustomParameter(_ key: String, value: Any) throws -> SignatureParameters {
         switch key {
         case Self.ALG:
             guard let stringValue = value as? String else {
@@ -233,11 +236,11 @@ public class SignatureParameters: CustomStringConvertible {
         }
     }
 
-    func toComponentIdentifier() -> StringItem {
+    public func toComponentIdentifier() -> StringItem {
         return StringItem(value: Self.SIGNATURE_PARAMS)
     }
 
-    func toComponentValue() throws -> InnerList {
+    public func toComponentValue() throws -> InnerList {
         // Copy the componentIdentifiers
         var identifiers: BareInnerList = BareInnerList()
         for identifier in componentIdentifiers {
@@ -280,7 +283,7 @@ public class SignatureParameters: CustomStringConvertible {
      * @param identifier the component identifier to check
      * @return true if the component identifier exists; false otherwise
      */
-    func containsComponentIdentifier(_ identifier: String) -> Bool {
+    public func containsComponentIdentifier(_ identifier: String) -> Bool {
         let predicate: (StringItem) -> Bool = { existingIdentifier in
             return existingIdentifier.value == identifier
         }
@@ -291,7 +294,7 @@ public class SignatureParameters: CustomStringConvertible {
      * Add a component without parameters.
      */
     @discardableResult
-    func addComponentIdentifier(_ identifier: String) -> SignatureParameters {
+    public func addComponentIdentifier(_ identifier: String) -> SignatureParameters {
         let normalizedIdentifier = identifier.starts(with: "@") ? identifier : identifier.lowercased()
         let stringItem = StringItem(value: normalizedIdentifier, parameters: [:])
         componentIdentifiers.append(stringItem)
@@ -303,7 +306,7 @@ public class SignatureParameters: CustomStringConvertible {
      * @param identifier the component identifier to check
      * @return true if the component identifier exists; false otherwise
      */
-    func containsComponentIdentifier(_ identifier: StringItem) -> Bool {
+    public func containsComponentIdentifier(_ identifier: StringItem) -> Bool {
         let predicate: (StringItem) -> Bool = { existingIdentifier in
             return existingIdentifier.value == identifier.value && existingIdentifier.parameters == identifier.parameters
         }
@@ -314,7 +317,7 @@ public class SignatureParameters: CustomStringConvertible {
      * Add a component with optional parameters. Field components are assumed to be already set to lowercase.
      */
     @discardableResult
-    func addComponentIdentifier(_ identifier: StringItem) -> SignatureParameters {
+    public func addComponentIdentifier(_ identifier: StringItem) -> SignatureParameters {
         componentIdentifiers.append(identifier)
         return self
     }

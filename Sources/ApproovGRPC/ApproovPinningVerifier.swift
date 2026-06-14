@@ -174,6 +174,10 @@ class ApproovPinningVerifier {
                 }
             }
             if isValidated {
+                if !ApproovService.isApproovEnabled() {
+                    promise.succeed(.certificateVerified)
+                    return
+                }
                 do {
                     let isVerified = try self.hasApproovPinMatch(host: self.securityFrameworkValidator.expectedHostname,
                         certChain: certChain)

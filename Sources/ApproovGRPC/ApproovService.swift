@@ -435,6 +435,10 @@ public class ApproovService {
      * @param devKey is the development key to be used
      */
     public static func setDevKey(devKey: String) {
+        if !isApproovEnabled() {
+            logApproovUnavailable("setDevKey")
+            return
+        }
         Approov.setDevKey(devKey)
         os_log("ApproovService: setDevKey", type: .debug)
     }
@@ -446,7 +450,7 @@ public class ApproovService {
      */
     public static func prefetch() {
         initLock.withLock {
-            if approovSDKInitialised {
+            if isApproovEnabled() {
                 // We succeeded initializing Approov SDK, fetch a token
                 Approov.fetchToken({(approovResult: ApproovTokenFetchResult) in
                     // Prefetch done, no need to process response
@@ -595,8 +599,11 @@ public class ApproovService {
 
         // Emit the trace-ID header if a trace-ID header name is configured.
         if let traceHeader = stateLock.withLock({ _approovTraceIDHeader }), !traceHeader.isEmpty {
-            setTraceIDHeaderKey = traceHeader
-            setTraceIDHeaderValue = approovResult.traceID
+            let traceID = approovResult.traceID
+            if !traceID.isEmpty {
+                setTraceIDHeaderKey = traceHeader
+                setTraceIDHeaderValue = traceID
+            }
         }
 
         // Deal with header substitutions, which may require further fetches but these should be
@@ -752,6 +759,10 @@ public class ApproovService {
      * @throws ApproovError if there was a problem
      */
     public static func getDeviceID() throws -> String {
+        if !isApproovEnabled() {
+            logApproovUnavailable("getDeviceID")
+            throw ApproovError.permanentError(message: "getDeviceID: SDK not initialized")
+        }
         if let deviceID: String = Approov.getDeviceID() {
             os_log("ApproovService: getDeviceID: %@", type: .debug, deviceID)
             return deviceID
@@ -769,6 +780,10 @@ public class ApproovService {
      * @param data is the data to be hashed and set in the token
      */
     public static func setDataHashInToken(data: String) {
+        if !isApproovEnabled() {
+            logApproovUnavailable("setDataHashInToken")
+            return
+        }
         Approov.setDataHashInToken(data)
         os_log("ApproovService: setDataHashInToken", type: .debug)
     }
@@ -946,6 +961,10 @@ public class ApproovService {
      * @return String of the last ARC or empty string if there was none
      */
     public static func getLastARC() -> String {
+        if !isApproovEnabled() {
+            logApproovUnavailable("getLastARC")
+            return ""
+        }
         // We have to get the current config and obtain one protected API endpoint at least
         // get the dynamic pins from Approov
         guard let approovPins = Approov.getPins("public-key-sha256") else {
@@ -975,6 +994,10 @@ public class ApproovService {
     * @param attrs is the signed JWT holding the new install attributes
     */
     public static func setInstallAttributes(attrs: String) {
+        if !isApproovEnabled() {
+            logApproovUnavailable("setInstallAttributes")
+            return
+        }
         Approov.setInstallAttrsInToken(attrs)
         os_log("ApproovService: setInstallAttributes", type: .info)
     }
