@@ -1,6 +1,6 @@
 import XCTest
 import NIOHPACK
-@testable import ApproovGRPCSession
+@testable import ApproovGRPC
 import Approov
 import MiniSDKTestSupport
 

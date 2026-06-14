@@ -45,7 +45,7 @@ if useMiniSDK {
 
 var packageTargets: [Target] = [
     .target(
-        name: "ApproovGRPCSession",
+        name: "ApproovGRPC",
         dependencies: [
             .product(name: "Approov", package: approovPackageName),
             .product(name: "GRPC", package: "grpc-swift"),
@@ -63,7 +63,7 @@ if useMiniSDK {
         .testTarget(
             name: "ApproovGRPCMiniSDKTests",
             dependencies: [
-                "ApproovGRPCSession",
+                "ApproovGRPC",
                 .product(name: "Approov", package: "mini-sdk-ios"),
                 .product(name: "MiniSDKTestSupport", package: "mini-sdk-ios")
             ],
@@ -73,14 +73,14 @@ if useMiniSDK {
 }
 
 let package = Package(
-    name: "ApproovGRPCSession",
+    name: "ApproovGRPC",
     platforms: packagePlatforms,
     products: [
         .library(
-            name: "ApproovGRPCSession",
-            targets: ["ApproovGRPCSession"]
+            name: "ApproovGRPC",
+            targets: ["ApproovGRPC"]
         ),
-        .library(name: "ApproovGRPCSessionDynamic", type: .dynamic, targets: ["ApproovGRPCSession"])
+        .library(name: "ApproovGRPCDynamic", type: .dynamic, targets: ["ApproovGRPC"])
     ],
     dependencies: packageDependencies,
     targets: packageTargets
