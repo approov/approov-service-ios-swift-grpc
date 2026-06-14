@@ -444,19 +444,11 @@ public class ApproovService {
     }
 
     /**
-     * Allows token prefetch operation to be performed as early as possible. This permits a token to be available while
-     * an application might be loading resources or is awaiting user input. Since the initial token fetch is the most
-     * expensive the prefetch can hide the most latency.
+     * Obsolete. This method is obsolete and no longer has any effect. The platform SDK manages prefetching automatically.
      */
+    @available(*, deprecated, message: "Obsolete. The platform SDK manages prefetching automatically.")
     public static func prefetch() {
-        initLock.withLock {
-            if isApproovEnabled() {
-                // We succeeded initializing Approov SDK, fetch a token
-                Approov.fetchToken({(approovResult: ApproovTokenFetchResult) in
-                    // Prefetch done, no need to process response
-                }, "approov.io")
-            }
-        }
+        os_log("ApproovService: prefetch is obsolete and does nothing", type: .info)
     }
 
     /**

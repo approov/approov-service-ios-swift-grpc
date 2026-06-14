@@ -111,7 +111,7 @@ ApproovService.setDevKey(devKey: "<dev-key>")
 ```
 
 ### prefetch()
-Permits a token to be prefetched as early as possible (e.g. at startup) to hide initial fetch latency.
+*Obsolete.* This method is obsolete and no longer has any effect (it only logs a message to the console). The platform SDK manages prefetching automatically.
 
 ```swift
 ApproovService.prefetch()
