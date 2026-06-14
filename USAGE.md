@@ -96,14 +96,69 @@ ApproovService.removeSubstitutionHeader(header: "authorization")
 
 ---
 
-## Proceed on Network Failure
+## Network Failure Behaviour and Fallback Status
 
-By default, if the service layer cannot fetch an Approov token due to network issues (such as `noNetwork` or `poorNetwork`), the request is blocked and an `ApproovError.networkingError` is thrown. You can allow requests to proceed anyway (without the token header) by setting `proceedOnNetworkFail`:
+By default, if the service layer cannot fetch an Approov token due to network issues (`noNetwork`, `poorNetwork`, `mitmDetected`), the request is blocked and an `ApproovError.networkingError` is thrown so it can be retried. This is the default `ApproovServiceMutator` behaviour.
+
+If you need a request to proceed even when a real token is unavailable, enable `setUseApproovStatusIfNoToken`. The Approov fetch status string (e.g. `NO_NETWORK`) is then sent on the token header instead of a token, giving your backend visibility into why no token was supplied:
 
 ```swift
-// Proceed even if token fetch fails due to network issues
-ApproovService.proceedOnNetworkFail = true
+ApproovService.setUseApproovStatusIfNoToken(shouldUse: true)
 ```
 
 > [!WARNING]
-> Use this with caution, as proceeding on network failures might allow connections before dynamic pins have been received, potentially opening the channel to a Man-in-the-Middle (MITM) attack.
+> Allowing requests to proceed without a valid token may permit a connection before dynamic pins have been received, potentially opening the channel to a Man-in-the-Middle (MITM) attack. Use with caution.
+
+> [!NOTE]
+> `proceedOnNetworkFail` is **deprecated** and no longer has any effect. Use `setUseApproovStatusIfNoToken(shouldUse:)` or a custom `ApproovServiceMutator` (below) instead.
+
+---
+
+## Custom Service Mutator
+
+The `ApproovServiceMutator` protocol lets you override how the service layer reacts at key decision points — for example, to proceed on a specific fetch status, exclude certain RPCs, or force a particular token-header value. All protocol methods have default (fail-closed) implementations, so you override only what you need, then install your mutator:
+
+```swift
+final class MyMutator: ApproovServiceMutator {
+    // e.g. proceed without a token when the SDK reports it is not available
+    func handleInterceptorFetchTokenResult(_ results: ApproovTokenFetchResult, url: String) throws -> Bool {
+        if results.status == .noApproovService { return false }   // forward unmodified
+        return try ApproovServiceMutatorDefault.shared.handleInterceptorFetchTokenResult(results, url: url)
+    }
+}
+
+ApproovService.setServiceMutator(MyMutator())
+// Restore the default behaviour at any time:
+ApproovService.setServiceMutator(nil)
+```
+
+You can also exclude specific RPCs from Approov mutation (pinning still applies) using exclusion regexes, which are matched against `https://<hostname><path>`:
+
+```swift
+ApproovService.addExclusionURLRegex(urlRegex: ".*/HealthCheck/.*")
+```
+
+---
+
+## HTTP Message Signing
+
+The service layer can add an RFC 9421 HTTP message signature to each protected request by installing the `ApproovDefaultMessageSigning` mutator. The signature binds the Approov token and selected request components together so the backend can verify integrity.
+
+```swift
+let factory = ApproovDefaultMessageSigning.generateDefaultSignatureParametersFactory()
+let signer = ApproovDefaultMessageSigning().setDefaultFactory(factory)
+ApproovService.setServiceMutator(signer)
+```
+
+The default configuration uses **install** (device-key, ECDSA P-256) signing and signs `@method`, `@target-uri`, the Approov token and trace-ID headers, and the `Authorization` header when present. To use **account** (HMAC-SHA256) signing instead:
+
+```swift
+let factory = ApproovDefaultMessageSigning
+    .generateDefaultSignatureParametersFactory()
+    .setUseAccountMessageSigning()
+```
+
+Two `Signature` / `Signature-Input` headers are added to the request metadata. Notes specific to gRPC:
+
+- **No body digest.** gRPC carries no buffered request body at the interceptor layer, so a `Content-Digest` is never generated.
+- **Fail-open.** If the SDK cannot provide a signature (e.g. the install key pair is unavailable, or no account key has been provisioned), or a returned signature cannot be decoded, the request proceeds **unsigned** and the reason is logged at error level. Only an unsupported algorithm (or a required body digest, which gRPC cannot produce) fails the request. Your backend decides whether to accept an unsigned request.
