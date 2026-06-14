@@ -91,14 +91,20 @@ public class ApproovService {
         try initLock.withLock {
             // Check if we attempt to use a different configString
             if approovSDKInitialised && ((comment?.hasPrefix("reinit")) == nil) {
-                if config != approovConfigString {
-                    // Throw exception indicating we are attempting to use different config
-                    let errorMessage = "Attempting to initialize with different configuration"
-                    os_log("ApproovService: %@", type: .error, errorMessage)
-                    throw ApproovError.configurationError(message: errorMessage)
+                if let oldConfig = approovConfigString, !oldConfig.isEmpty {
+                    if config != oldConfig {
+                        // Throw exception indicating we are attempting to use different config
+                        let errorMessage = "Attempting to initialize with different configuration"
+                        os_log("ApproovService: %@", type: .error, errorMessage)
+                        throw ApproovError.configurationError(message: errorMessage)
+                    }
+                    os_log("ApproovService: Ignoring multiple ApproovService layer initializations with the same config")
+                    return
+                } else if config.isEmpty {
+                    // Already initialized with empty config, and new config is also empty
+                    os_log("ApproovService: Ignoring multiple ApproovService layer initializations with the same config")
+                    return
                 }
-                os_log("ApproovService: Ignoring multiple ApproovService layer initializations with the same config")
-                return
             }
             // Initialize Approov SDK
             do {
@@ -117,7 +123,18 @@ public class ApproovService {
             }
             approovConfigString = config
             approovSDKInitialised = true
-            Approov.setUserProperty("approov-service-grpc")
+            Approov.setUserProperty("approov-service-grpc/dev")
+        }
+    }
+
+    /**
+     * Resets the ApproovService state for testing.
+     * This is a testing requirement and has no production use case.
+     */
+    static func resetForTesting() {
+        initLock.withLock {
+            approovSDKInitialised = false
+            _approovConfigString = nil
         }
     }
 
@@ -218,7 +235,7 @@ public class ApproovService {
     static var approovConfigString: String? {
         set (newValue) {
             stateLock.withLock {
-                if (_approovConfigString == nil) {
+                if (_approovConfigString == nil || _approovConfigString == "") {
                     _approovConfigString = newValue
                 }
             }
@@ -228,6 +245,15 @@ public class ApproovService {
                 return _approovConfigString
             }
         }
+    }
+
+    /**
+     * Returns true if Approov is initialized and enabled (i.e. has a valid configuration).
+     */
+    public static func isApproovEnabled() -> Bool {
+        guard approovSDKInitialised else { return false }
+        let config = approovConfigString ?? ""
+        return !config.isEmpty
     }
 
     /**
@@ -276,6 +302,10 @@ public class ApproovService {
      * @throws ApproovError if it is not possible to obtain secure strings for substitution
      */
     public static func updateRequestHeaders(headers: HPACKHeaders, hostname: String) throws -> HPACKHeaders {
+        if !isApproovEnabled() {
+            return headers
+        }
+
         // Check if Bind Header is set to a non empty string
         if bindHeader != "" {
             if let aValue = headers.first(name: bindHeader) {
