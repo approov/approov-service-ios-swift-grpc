@@ -160,4 +160,96 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
         XCTAssertNotNil(payload)
         XCTAssertEqual(payload?["did"] as? String, "daIvmEWBA2gvZny7a/RC/w==")
     }
+
+    // MARK: - §5 Message Signing
+
+    /// Reinitializes with the target host marked as protected so token fetches succeed.
+    private func reinitializeServiceWithTargetHost() throws {
+        try reinitializeService(
+            scenarioJSON: scenarioJSON(
+                caseName: uniqueCaseName(prefix: "target-host"),
+                body: "\"protectedDomains\": [\"\(targetHost)\"]"
+            ),
+            comment: "reinit-signing"
+        )
+    }
+
+    func testInstallMessageSigningAddsSignatureHeaders() throws {
+        try reinitializeServiceWithTargetHost()
+
+        let factory = ApproovDefaultMessageSigning.generateDefaultSignatureParametersFactory()
+            .setUseInstallMessageSigning()
+        let signer = ApproovDefaultMessageSigning().setDefaultFactory(factory)
+        ApproovService.setServiceMutator(signer)
+
+        let updated = try ApproovService.updateRequestHeaders(
+            headers: [:], hostname: targetURLString, path: "/echo.Echo/Get")
+
+        XCTAssertNotNil(updated.first(name: "Approov-Token"))
+        let signature = try XCTUnwrap(updated.first(name: "Signature"))
+        let signatureInput = try XCTUnwrap(updated.first(name: "Signature-Input"))
+        // Byte-sequence form per RFC 9421: install=:base64:
+        XCTAssertTrue(signature.contains("install=:"), "Signature: \(signature)")
+        XCTAssertTrue(signatureInput.contains("install=("), "Signature-Input: \(signatureInput)")
+        XCTAssertFalse(signatureInput.contains("account="))
+        // The signed components should include the derived components and the Approov token header.
+        XCTAssertTrue(signatureInput.contains("\"@method\""))
+        XCTAssertTrue(signatureInput.contains("\"@target-uri\""))
+        XCTAssertTrue(signatureInput.lowercased().contains("\"approov-token\""))
+    }
+
+    func testAccountMessageSigningAddsSignatureHeaders() throws {
+        try reinitializeServiceWithTargetHost()
+
+        let factory = ApproovDefaultMessageSigning.generateDefaultSignatureParametersFactory()
+            .setUseAccountMessageSigning()
+        let signer = ApproovDefaultMessageSigning().setDefaultFactory(factory)
+        ApproovService.setServiceMutator(signer)
+
+        let updated = try ApproovService.updateRequestHeaders(
+            headers: [:], hostname: targetURLString, path: "/echo.Echo/Get")
+
+        XCTAssertNotNil(updated.first(name: "Approov-Token"))
+        let signature = try XCTUnwrap(updated.first(name: "Signature"))
+        XCTAssertTrue(signature.contains("account=:"), "Signature: \(signature)")
+        XCTAssertTrue(try XCTUnwrap(updated.first(name: "Signature-Input")).contains("account=("))
+    }
+
+    func testSigningSkippedForUnprotectedRequest() throws {
+        try reinitializeServiceWithTargetHost()
+
+        let factory = ApproovDefaultMessageSigning.generateDefaultSignatureParametersFactory()
+        let signer = ApproovDefaultMessageSigning().setDefaultFactory(factory)
+        ApproovService.setServiceMutator(signer)
+
+        // A host that is not in the protected domains yields no Approov token, so there is nothing to
+        // sign and no Signature header must be added.
+        let updated = try ApproovService.updateRequestHeaders(
+            headers: [:], hostname: "https://unprotected.example.com", path: "/echo.Echo/Get")
+
+        XCTAssertNil(updated.first(name: "Approov-Token"))
+        XCTAssertNil(updated.first(name: "Signature"))
+        XCTAssertNil(updated.first(name: "Signature-Input"))
+    }
+
+    func testUnsupportedSigningAlgorithmFailsClosed() throws {
+        try reinitializeServiceWithTargetHost()
+
+        final class UnsupportedAlgFactory: SignatureParametersFactory {
+            override func buildSignatureParameters(provider: ApproovGRPCComponentProvider,
+                                                   changes: ApproovRequestMutations) throws -> SignatureParameters {
+                let params = try super.buildSignatureParameters(provider: provider, changes: changes)
+                params.setAlg("unsupported-alg")
+                return params
+            }
+        }
+
+        let factory = UnsupportedAlgFactory().setUseInstallMessageSigning()
+        let signer = ApproovDefaultMessageSigning().setDefaultFactory(factory)
+        ApproovService.setServiceMutator(signer)
+
+        // An unsupported algorithm is one of the two fail-closed cases: the request must be aborted.
+        XCTAssertThrowsError(try ApproovService.updateRequestHeaders(
+            headers: [:], hostname: targetURLString, path: "/echo.Echo/Get"))
+    }
 }

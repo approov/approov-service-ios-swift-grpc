@@ -458,8 +458,8 @@ public class ApproovService {
      * @return headers passed in, or modified by adding an Approov token header and new header values if required
      * @throws ApproovError if it is not possible to obtain secure strings for substitution
      */
-    public static func updateRequestHeaders(headers: HPACKHeaders, hostname: String) throws -> HPACKHeaders {
-        let request = ApproovRequest(hostname: hostname, headers: headers)
+    public static func updateRequestHeaders(headers: HPACKHeaders, hostname: String, path: String? = nil) throws -> HPACKHeaders {
+        let request = ApproovRequest(hostname: hostname, headers: headers, path: path)
         let response = updateRequestWithApproov(request: request)
         if let error = response.error {
             throw error

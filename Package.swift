@@ -30,7 +30,8 @@ let packagePlatforms: [SupportedPlatform] = useMiniSDK
 
 var packageDependencies: [Package.Dependency] = [
     .package(url: "https://github.com/grpc/grpc-swift.git", .upToNextMajor(from: "1.0.0")),
-    .package(url: "https://github.com/apple/swift-log.git", .upToNextMajor(from: "1.0.0"))
+    .package(url: "https://github.com/apple/swift-log.git", .upToNextMajor(from: "1.0.0")),
+    .package(url: "https://github.com/apple/swift-http-structured-headers.git", .upToNextMajor(from: "1.0.0"))
 ]
 
 if useMiniSDK {
@@ -48,7 +49,8 @@ var packageTargets: [Target] = [
         dependencies: [
             .product(name: "Approov", package: approovPackageName),
             .product(name: "GRPC", package: "grpc-swift"),
-            .product(name: "Logging", package: "swift-log")
+            .product(name: "Logging", package: "swift-log"),
+            .product(name: "RawStructuredFieldValues", package: "swift-http-structured-headers")
         ],
         path: "Sources/ApproovGRPC"
     )

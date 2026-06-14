@@ -40,7 +40,9 @@ public class ApproovClientInterceptor<Request, Reply>: ClientInterceptor<Request
         // The (user-provided) request headers, these are sent at the start of each RPC.
         case var .metadata(headers):
             do {
-                headers = try ApproovService.updateRequestHeaders(headers: headers, hostname: hostname)
+                // context.path is the RPC path (e.g. "/package.Service/Method") and is passed through
+                // so message signing can include the @path / @target-uri derived components.
+                headers = try ApproovService.updateRequestHeaders(headers: headers, hostname: hostname, path: context.path)
                 // Forward the request part to the next interceptor.
                 context.send(.metadata(headers), promise: promise)
             } catch {
