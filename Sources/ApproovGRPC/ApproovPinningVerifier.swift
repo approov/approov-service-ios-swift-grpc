@@ -201,9 +201,11 @@ class ApproovPinningVerifier {
      * @return Bool true if an Approov pin match was made
      */
     func hasApproovPinMatch(host: String, certChain: [NIOSSLCertificate]) throws -> Bool {
-        // Ensure pins are refreshed eventually
-        ApproovService.prefetch()
-        
+        // Use the current live Approov pins (read below via Approov.getPins). The Approov SDK
+        // refreshes its configuration out-of-band after an attestation/token fetch, so the pin set
+        // reflects any dynamic pin update for the app. This check runs during the TLS handshake, so
+        // a tightened pin set takes effect on the next (re)connection.
+
         // Get the certificate chain count
         for cert in certChain {
             // Get the current certificate from the chain

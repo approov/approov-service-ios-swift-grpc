@@ -26,6 +26,13 @@ The format is based on Keep a Changelog and this project adheres to Semantic Ver
 - `proceedOnNetworkFail` is now a no-op retained only for source compatibility. Use a custom `ApproovServiceMutator` and/or `setUseApproovStatusIfNoToken(shouldUse:)` instead.
 - `getMessageSignature(message:)` is retained as an alias for `getAccountMessageSignature(message:)`; prefer the explicit account / install accessors.
 
+### Fixed
+- `ApproovClientInterceptor.send(_:promise:context:)` no longer completes the same `EventLoopPromise` twice on a request-mutation failure. It previously called `promise?.fail(error)` and then `context.cancel(promise: promise)` with the already-failed promise, which traps in SwiftNIO and could crash the client on a token-fetch/attestation failure; it now cancels with a fresh (`nil`) promise.
+- The trace-ID header is now emitted with an empty value (rather than omitted) when the SDK returns an empty trace ID on a protected request, providing backend evidence that Approov processing occurred (matches the token-header behaviour).
+
+### Security
+- TLS pinning behaviour clarified and hardened. Pin matching reads the current live Approov pins via `Approov.getPins`; the obsolete `ApproovService.prefetch()` call (a no-op) was removed from the pin-match path. Bypass mode (empty-config initialization) continues to skip Approov pin matching but still performs full OS certificate-chain validation. Pins are enforced at TLS handshake time, so a tightened pin set takes effect on the next (re)connection; long-lived channels are not forcibly torn down.
+
 ## [3.5.3] - 2026-01-15
 
 ### Added

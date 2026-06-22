@@ -589,13 +589,12 @@ public class ApproovService {
             setTokenHeaderValue = tokenPrefix + approovResult.token
         }
 
-        // Emit the trace-ID header if a trace-ID header name is configured.
+        // Emit the trace-ID header if a trace-ID header name is configured. §2 Missing Artifacts
+        // Fallback: emit it even when the SDK returns an empty trace ID, so the backend still sees
+        // evidence that Approov processing occurred (mirrors the token header, always emitted).
         if let traceHeader = stateLock.withLock({ _approovTraceIDHeader }), !traceHeader.isEmpty {
-            let traceID = approovResult.traceID
-            if !traceID.isEmpty {
-                setTraceIDHeaderKey = traceHeader
-                setTraceIDHeaderValue = traceID
-            }
+            setTraceIDHeaderKey = traceHeader
+            setTraceIDHeaderValue = approovResult.traceID
         }
 
         // Deal with header substitutions, which may require further fetches but these should be

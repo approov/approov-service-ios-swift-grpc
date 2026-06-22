@@ -46,9 +46,12 @@ public class ApproovClientInterceptor<Request, Reply>: ClientInterceptor<Request
                 // Forward the request part to the next interceptor.
                 context.send(.metadata(headers), promise: promise)
             } catch {
+                // Fail the send promise with the error so the caller observes it...
                 promise?.fail(error)
-                // Must not proceed with the network request - cancel it
-                context.cancel(promise: promise)
+                // ...then cancel the RPC so the network request does not proceed. Pass a fresh
+                // (nil) promise to cancel: reusing the already-failed `promise` would complete the
+                // same EventLoopPromise twice, which traps in SwiftNIO and crashes the client.
+                context.cancel(promise: nil)
             }
 
         // The request message and metadata (ignored here). For unary and server-streaming RPCs we

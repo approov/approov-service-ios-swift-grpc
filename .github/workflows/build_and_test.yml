@@ -194,7 +194,20 @@ jobs:
           echo "Replacing 'dev' with '$VERSION' in $FILE and Package.swift..."
           perl -pi -e "s|approov-service-grpc/dev|approov-service-grpc/$VERSION|g" "$FILE"
           perl -pi -e "s|releaseTAG = \"dev\"|releaseTAG = \"$VERSION\"|g" Package.swift
-          
+
+          # Podspec-aware version stamping. This layer ships via SwiftPM only and currently has no
+          # .podspec, so this loop is a no-op today. If a CocoaPods podspec is ever added, its
+          # version literal is rewritten in lock-step with Package.swift / ApproovService.swift so a
+          # CocoaPods release always matches the git tag. Handles both an `s.version`/`spec.version`
+          # assignment and an `approov-service-grpc/dev` user-property placeholder.
+          shopt -s nullglob
+          for PODSPEC in *.podspec; do
+            echo "Stamping version $VERSION into $PODSPEC..."
+            perl -pi -e "s|(\bs(?:pec)?\.version\s*=\s*['\"])[^'\"]*(['\"])|\${1}$VERSION\${2}|g" "$PODSPEC"
+            perl -pi -e "s|approov-service-grpc/dev|approov-service-grpc/$VERSION|g" "$PODSPEC"
+          done
+          shopt -u nullglob
+
           echo "Configuring git and committing release modifications..."
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"

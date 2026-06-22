@@ -3,8 +3,14 @@
 import PackageDescription
 import Foundation
 
-// Release tag - defaults to "dev" for local development and CI testing.
-// Placed here as a placeholder to be dynamically replaced during the tagging pipeline.
+// Canonical release-version marker for this package.
+//
+// Defaults to "dev" for local development and CI testing. The release tagging pipeline
+// (.github/workflows/build_and_test.yml -> tag-release) rewrites this literal to the version
+// taken from the top entry of CHANGELOG.md, in lock-step with the matching `approov-service-grpc/<version>`
+// user-property string in Sources/ApproovGRPC/ApproovService.swift. It is intentionally a static
+// marker (SwiftPM manifests expose no runtime version field); it is read by the tooling/tagging
+// pipeline, not by package build logic — do not delete it as "unused".
 let releaseTAG = "dev"
 
 // SDK package version (used for both iOS and watchOS in production)
