@@ -17,8 +17,15 @@ import ApproovGRPC
 import GRPC
 import NIO
 
-// Initialize the Approov service
-try! ApproovService.initialize(config: "<config-string>")
+// Initialize the Approov service. Initialization can fail (bad config / SDK error), so guard it
+// and fall back to bypass mode (empty config) rather than letting the app crash. See the README
+// "INITIALIZING APPROOV SERVICE" section for the full pattern (device-ID + session correlation logging).
+do {
+    try ApproovService.initialize(config: "<config-string>")
+} catch {
+    // Continue UNPROTECTED — requests go out without Approov protection; the backend stays the enforcement point.
+    try? ApproovService.initialize(config: "")
+}
 
 // Create an EventLoopGroup
 let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
