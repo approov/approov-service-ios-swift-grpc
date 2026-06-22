@@ -138,9 +138,17 @@ public class ApproovDefaultMessageSigning: ApproovServiceMutator, CustomStringCo
                 return request
             }
 
-            // Build the signature base
+            // Build the signature base. A failure here is fail-open (proceed unsigned + log at error).
             let baseBuilder = SignatureBaseBuilder(sigParams: params, ctx: provider)
-            let message = try baseBuilder.createSignatureBase()
+            let message: String
+            do {
+                message = try baseBuilder.createSignatureBase()
+            } catch {
+                if ApproovService.loggingLevel >= .error {
+                    os_log("ApproovService: failed to build the signature base, skipping signing: %@", type: .error, error.localizedDescription)
+                }
+                return provider.getRequest()
+            }
             // WARNING never log the message as it contains an Approov token which provides access to your API.
 
             // Generate the signature
@@ -188,12 +196,25 @@ public class ApproovDefaultMessageSigning: ApproovServiceMutator, CustomStringCo
                 throw ApproovError.permanentError(message: "Unsupported algorithm identifier: \(params.getAlg() ?? "unknown")")
             }
 
-            // Create signature headers
-            guard let sigHeader = try SFV.serializeDictionary(key: sigId, data: signature) else {
-                throw ApproovError.permanentError(message: "Failed to serialize signature header")
-            }
-            guard let sigInputHeader = try SFV.serializeDictionary(key: sigId, innerList: params.toComponentValue()) else {
-                throw ApproovError.permanentError(message: "Failed to serialize signature input header")
+            // Create signature headers. Serialization failure (a thrown error or a nil result) is
+            // fail-open: proceed unsigned and log at error level rather than aborting the request.
+            let sigHeader: String
+            let sigInputHeader: String
+            do {
+                guard let sh = try SFV.serializeDictionary(key: sigId, data: signature),
+                      let sih = try SFV.serializeDictionary(key: sigId, innerList: params.toComponentValue()) else {
+                    if ApproovService.loggingLevel >= .error {
+                        os_log("ApproovService: failed to serialize signature headers, skipping signing", type: .error)
+                    }
+                    return provider.getRequest()
+                }
+                sigHeader = sh
+                sigInputHeader = sih
+            } catch {
+                if ApproovService.loggingLevel >= .error {
+                    os_log("ApproovService: failed to serialize signature headers, skipping signing: %@", type: .error, error.localizedDescription)
+                }
+                return provider.getRequest()
             }
 
             // Add headers to the request. Use replaceOrAdd so that re-processing an already-signed
@@ -204,7 +225,7 @@ public class ApproovDefaultMessageSigning: ApproovServiceMutator, CustomStringCo
 
             if params.isDebugMode() {
                 let digest = ApproovDefaultMessageSigning.sha256(data: Data(message.utf8))
-                if let sigBaseDigestHeader = try SFV.serializeDictionary(key: "sha-256", data: digest) {
+                if let sigBaseDigestHeader = (try? SFV.serializeDictionary(key: "sha-256", data: digest)) ?? nil {
                     signedRequest.headers.replaceOrAdd(name: "Signature-Base-Digest", value: sigBaseDigestHeader)
                 } else {
                     if ApproovService.loggingLevel >= .debug {

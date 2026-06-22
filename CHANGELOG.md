@@ -27,6 +27,7 @@ The format is based on Keep a Changelog and this project adheres to Semantic Ver
 - `getMessageSignature(message:)` is retained as an alias for `getAccountMessageSignature(message:)`; prefer the explicit account / install accessors.
 
 ### Fixed
+- Message signing now fully conforms to the cross-layer fail-open policy (core-project-approov#564): a signature-base build failure and a `Signature`/`Signature-Input` serialization failure now log at error level and proceed **unsigned** instead of aborting the request, matching the existing install/account/base64/ASN.1 fail-open paths. Only an unsupported algorithm still fails closed (gRPC produces no body digest).
 - `ApproovClientInterceptor.send(_:promise:context:)` no longer completes the same `EventLoopPromise` twice on a request-mutation failure. It previously called `promise?.fail(error)` and then `context.cancel(promise: promise)` with the already-failed promise, which traps in SwiftNIO and could crash the client on a token-fetch/attestation failure; it now cancels with a fresh (`nil`) promise.
 - The trace-ID header is now emitted with an empty value (rather than omitted) when the SDK returns an empty trace ID on a protected request, providing backend evidence that Approov processing occurred (matches the token-header behaviour).
 
