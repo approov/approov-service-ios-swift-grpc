@@ -100,7 +100,10 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
         ApproovService.resetForTesting()
         try ApproovService.initialize(config: "", comment: "reinit-empty-config")
 
-        XCTAssertFalse(ApproovService.approovConfigString != "")
+        // Assert the value, not the negation of an inequality: bypass mode must persist the
+        // empty config string. Note approovConfigString is String?, so the previous
+        // XCTAssertFalse(... != "") did fail on nil - it was unreadable, not permissive.
+        XCTAssertEqual(ApproovService.approovConfigString, "")
 
         let plainHeaders: HPACKHeaders = [:]
         let plainUpdated = try ApproovService.updateRequestHeaders(headers: plainHeaders, hostname: targetURLString)

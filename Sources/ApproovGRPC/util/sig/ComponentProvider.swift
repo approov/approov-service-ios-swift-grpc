@@ -112,9 +112,16 @@ extension ComponentProvider {
                             return String(data: Data(serializedValue), encoding: .utf8)
                         }
                     }
-                    throw ComponentProviderError.unknownComponent("Field value for \(baseIdentifier) not found")
+                    // The field was present and parsed; it is the requested dictionary key that is
+                    // absent. Saying "field value not found" here sends the reader looking for a
+                    // missing header that is in fact there.
+                    throw ComponentProviderError.unknownComponent(
+                        "Key '\(keyParameter)' not present in dictionary field \(baseIdentifier)")
                 }
-                throw ComponentProviderError.missingParameter("'key' parameter of \(baseIdentifier) is required")
+                // Reached when the `key` parameter WAS supplied but the header itself is absent, so
+                // this is a missing field, not a missing parameter.
+                throw ComponentProviderError.unknownComponent(
+                    "Field \(baseIdentifier) not found, required by component identifier with 'key' parameter")
             } else if componentIdentifier.parameters["sf"] != nil {
                 switch (baseIdentifier) {
                 case "accept", "accept-ch", "accept-encoding", "accept-language", "accept-patch", "accept-ranges",

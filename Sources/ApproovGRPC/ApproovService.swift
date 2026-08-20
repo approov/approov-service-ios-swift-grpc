@@ -440,7 +440,9 @@ public class ApproovService {
             return
         }
         Approov.setDevKey(devKey)
-        os_log("ApproovService: setDevKey", type: .debug)
+        if loggingLevel >= .debug {
+            os_log("ApproovService: setDevKey", type: .debug)
+        }
     }
 
     /**
@@ -448,7 +450,9 @@ public class ApproovService {
      */
     @available(*, deprecated, message: "Obsolete. The platform SDK manages prefetching automatically.")
     public static func prefetch() {
-        os_log("ApproovService: prefetch is obsolete and does nothing", type: .info)
+        if loggingLevel >= .info {
+            os_log("ApproovService: prefetch is obsolete and does nothing", type: .info)
+        }
     }
 
     /**
@@ -755,7 +759,9 @@ public class ApproovService {
             throw ApproovError.permanentError(message: "getDeviceID: SDK not initialized")
         }
         if let deviceID: String = Approov.getDeviceID() {
-            os_log("ApproovService: getDeviceID: %@", type: .debug, deviceID)
+            if loggingLevel >= .debug {
+                os_log("ApproovService: getDeviceID: %@", type: .debug, deviceID)
+            }
             return deviceID
         }
         throw ApproovError.runtimeError(message: "getDeviceID: no device ID")
@@ -776,7 +782,9 @@ public class ApproovService {
             return
         }
         Approov.setDataHashInToken(data)
-        os_log("ApproovService: setDataHashInToken", type: .debug)
+        if loggingLevel >= .debug {
+            os_log("ApproovService: setDataHashInToken", type: .debug)
+        }
     }
 
     /**
@@ -959,7 +967,9 @@ public class ApproovService {
         // We have to get the current config and obtain one protected API endpoint at least
         // get the dynamic pins from Approov
         guard let approovPins = Approov.getPins("public-key-sha256") else {
-            os_log("ApproovService: no host pinning information available", type: .error)
+            if loggingLevel >= .error {
+                os_log("ApproovService: no host pinning information available", type: .error)
+            }
             return ""
         }
         // The approovPins contains a map of hostnames to pin strings.  We need to skip the '*' entry (Managed Trust Roots),
@@ -971,7 +981,9 @@ public class ApproovService {
                     return result.arc
                 }
             }
-        os_log("ApproovService: ARC code unavailable", type: .info)
+        if loggingLevel >= .info {
+            os_log("ApproovService: ARC code unavailable", type: .info)
+        }
         return ""
     }
 
@@ -990,7 +1002,9 @@ public class ApproovService {
             return
         }
         Approov.setInstallAttrsInToken(attrs)
-        os_log("ApproovService: setInstallAttributes", type: .info)
+        if loggingLevel >= .info {
+            os_log("ApproovService: setInstallAttributes", type: .info)
+        }
     }
 
 }

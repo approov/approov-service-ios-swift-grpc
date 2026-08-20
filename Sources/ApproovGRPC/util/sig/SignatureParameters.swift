@@ -24,9 +24,6 @@ public class SignatureParameters: CustomStringConvertible {
     /**
      * Default constructor creates an empty SignatureParameters ready to be populated.
      */
-    /**
-     * Default constructor creates an empty SignatureParameters ready to be populated.
-     */
     public init() {
         self.componentIdentifiers = []
         self.componentParameters = [:]
