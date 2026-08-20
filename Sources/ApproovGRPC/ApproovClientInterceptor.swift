@@ -21,6 +21,7 @@ import Approov
 import Foundation
 import GRPC
 import NIO
+import os.log
 
 public class ApproovClientInterceptor<Request, Reply>: ClientInterceptor<Request, Reply> {
 
@@ -46,7 +47,15 @@ public class ApproovClientInterceptor<Request, Reply>: ClientInterceptor<Request
                 // Forward the request part to the next interceptor.
                 context.send(.metadata(headers), promise: promise)
             } catch {
-                // Fail the send promise with the error so the caller observes it...
+                // Log at error first: grpc-swift's own invocation path passes `promise: nil`
+                // (GRPC Call.swift `_send(.metadata(...), promise: nil)`), so `promise?.fail` is a
+                // no-op there and the application sees only a cancelled RPC with this error - and
+                // its rejection ARC - discarded. The log is the only place the cause survives.
+                if ApproovService.loggingLevel >= .error {
+                    os_log("ApproovService: request rejected before send for %@: %@", type: .error,
+                           hostname, error.localizedDescription)
+                }
+                // Fail the send promise so a caller that did supply one observes the error...
                 promise?.fail(error)
                 // ...then cancel the RPC so the network request does not proceed. Pass a fresh
                 // (nil) promise to cancel: reusing the already-failed `promise` would complete the

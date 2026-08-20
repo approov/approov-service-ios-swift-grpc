@@ -158,6 +158,52 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
         }
     }
 
+    func testNoApproovServiceFailsSubstitutionClosed() throws {
+        // A protected domain where the SDK cannot produce a token must still apply the substitution
+        // policy, which for NO_APPROOV_SERVICE is fail closed (TESTING_REQUIREMENTS.md section 3):
+        // the alternative is sending the lookup key as the credential. Before this was fixed, the
+        // token-path early return skipped the substitution loop entirely, so the handler's own
+        // fail-closed branch was unreachable and the placeholder went out with no error and no log.
+        //
+        // Both statuses have to be forced: the token fetch and the secure-string fetch are separate
+        // SDK calls with independent statuses, and it is the secure-string one the substitution
+        // handler judges. A real outage fails both, which is what this reproduces.
+        try reinitializeService(
+            scenarioJSON: scenarioJSON(
+                caseName: uniqueCaseName(prefix: "no-approov-service"),
+                body: """
+                "protectedDomains": ["\(targetHost)"],
+                "fetchApproovToken": [
+                  { "urlRegex": ".*", "status": "NO_APPROOV_SERVICE" }
+                ],
+                "fetchSecureString": [
+                  { "key": "header-key", "status": "NO_APPROOV_SERVICE" }
+                ],
+                "initialSecureStrings": {
+                  "header-key": "header-secret"
+                }
+                """
+            ),
+            comment: "reinit-no-approov-service"
+        )
+
+        ApproovService.addSubstitutionHeader(header: "api-key", prefix: nil)
+
+        var headers: HPACKHeaders = [:]
+        headers.add(name: "api-key", value: "header-key")
+
+        XCTAssertThrowsError(
+            try ApproovService.updateRequestHeaders(headers: headers, hostname: targetURLString)
+        ) { error in
+            // Assert the error type, not merely that something threw: a bare assertThrowsError
+            // would also pass on an unrelated failure earlier in the pipeline.
+            guard case ApproovError.permanentError = error else {
+                XCTFail("expected permanentError for a NO_APPROOV_SERVICE substitution, got \(error)")
+                return
+            }
+        }
+    }
+
     func testFetchTokenReturnsSignedTokenWithExpectedClaims() throws {
         MiniSDKAttesterProxyController.reset()
         let domainsJSON = "\"protectedDomains\": [\"\(targetHost)\"]"

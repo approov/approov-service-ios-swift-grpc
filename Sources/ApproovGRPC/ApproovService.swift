@@ -331,7 +331,12 @@ public class ApproovService {
      * Returns true if Approov is initialized and enabled (i.e. has a valid configuration).
      */
     public static func isApproovEnabled() -> Bool {
-        guard approovSDKInitialised else { return false }
+        // Read under initLock: initialize() clears this flag, resets state, then sets it again, so an
+        // unsynchronised read can observe the window in between and report "not enabled" while the
+        // process is protected - which silently drops the token from a request and Approov pinning
+        // from a handshake. It is also a data race: this is read from NIO event loops, the pinning
+        // callback queue and application threads while initialize() writes it.
+        guard initLock.withLock({ approovSDKInitialised }) else { return false }
         let config = approovConfigString ?? ""
         return !config.isEmpty
     }
@@ -571,34 +576,59 @@ public class ApproovService {
         var setTraceIDHeaderKey: String?
         var setTraceIDHeaderValue: String?
 
+        var shouldAddToken = false
         do {
-            let shouldAddToken = try mutator.handleInterceptorFetchTokenResult(approovResult, url: hostname)
+            shouldAddToken = try mutator.handleInterceptorFetchTokenResult(approovResult, url: hostname)
             response.decision = .ShouldProceed
-            if !shouldAddToken {
-                // Status such as unprotectedURL / unknownURL / noApproovService: forward unmodified.
-                return response
-            }
         } catch {
             applyMutatorError(error, response: &response, context: "Approov token fetch")
             return response
         }
 
-        let tokenHeader = stateLock.withLock { _approovTokenHeader }
-        let tokenPrefix = stateLock.withLock { _approovTokenPrefix }
-        setTokenHeaderKey = tokenHeader
-        if approovResult.token.isEmpty && (stateLock.withLock { _useApproovStatusIfNoToken }) {
-            // §2 Token Fallback Status: surface the fetch status to the backend in place of a token.
-            setTokenHeaderValue = tokenPrefix + response.sdkMessage
-        } else {
-            setTokenHeaderValue = tokenPrefix + approovResult.token
+        if !shouldAddToken {
+            // The mutator declined to add a token. What happens to the rest of the pipeline depends
+            // on WHY, and the two cases are not interchangeable:
+            //
+            //  - unknownURL / unprotectedURL: the domain is not Approov-protected, so nothing is
+            //    processed. Resolving a substitution placeholder here would send the real secret to
+            //    a host Approov neither tokenizes nor pins, which is the exposure
+            //    TESTING_REQUIREMENTS.md section 2 "Unprotected Request Processing" forbids.
+            //
+            //  - anything else, in practice noApproovService: the domain IS protected, the SDK just
+            //    could not produce a token. Substitutions must still be attempted so the
+            //    substitution handler's own policy applies - for noApproovService that policy is
+            //    fail closed (section 3), because the alternative is transmitting the lookup key as
+            //    the credential. Returning here would leave that policy unreachable and the
+            //    placeholder on the wire with no error and no log.
+            switch approovResult.status {
+            case .unknownURL, .unprotectedURL:
+                return response
+            default:
+                if loggingLevel >= .error {
+                    os_log("ApproovService: no token added for %@ (%@); still applying substitution policy",
+                           type: .error, hostname, Approov.string(from: approovResult.status))
+                }
+            }
         }
 
-        // Emit the trace-ID header if a trace-ID header name is configured. §2 Missing Artifacts
-        // Fallback: emit it even when the SDK returns an empty trace ID, so the backend still sees
-        // evidence that Approov processing occurred (mirrors the token header, always emitted).
-        if let traceHeader = stateLock.withLock({ _approovTraceIDHeader }), !traceHeader.isEmpty {
-            setTraceIDHeaderKey = traceHeader
-            setTraceIDHeaderValue = approovResult.traceID
+        if shouldAddToken {
+            let tokenHeader = stateLock.withLock { _approovTokenHeader }
+            let tokenPrefix = stateLock.withLock { _approovTokenPrefix }
+            setTokenHeaderKey = tokenHeader
+            if approovResult.token.isEmpty && (stateLock.withLock { _useApproovStatusIfNoToken }) {
+                // §2 Token Fallback Status: surface the fetch status to the backend in place of a token.
+                setTokenHeaderValue = tokenPrefix + response.sdkMessage
+            } else {
+                setTokenHeaderValue = tokenPrefix + approovResult.token
+            }
+
+            // Emit the trace-ID header if a trace-ID header name is configured. §2 Missing Artifacts
+            // Fallback: emit it even when the SDK returns an empty trace ID, so the backend still sees
+            // evidence that Approov processing occurred (mirrors the token header, always emitted).
+            if let traceHeader = stateLock.withLock({ _approovTraceIDHeader }), !traceHeader.isEmpty {
+                setTraceIDHeaderKey = traceHeader
+                setTraceIDHeaderValue = approovResult.traceID
+            }
         }
 
         // Deal with header substitutions, which may require further fetches but these should be

@@ -56,6 +56,25 @@ try? ApproovService.initialize(config: "")
 
 When initialized with an empty configuration, the service layer operates as a plain pass-through. It will not perform token injection or secure string substitution, and dynamic pinning is skipped (though standard host certificate validation is still enforced by NIOSSL).
 
+### Initialize before creating channels
+
+Approov pin matching is applied only while the service layer is enabled. A TLS handshake that
+completes **before `initialize()` has run**, or after it has thrown, is therefore **not
+Approov-pinned**: NIOSSL still performs full OS certificate-chain validation, but the Approov
+managed trust roots and dynamic pins are not consulted for that connection.
+
+This is deliberate. Failing the handshake instead would break applications that legitimately build
+channels during startup, so the connection is allowed to proceed. The consequence is that a channel
+created early keeps its unpinned connections for as long as it lives, so:
+
+- call `await ApproovService.initialize(config:)` before building any `ApproovClientConnection`, and
+- if initialization is asynchronous in your app, create channels from the completion path rather
+  than alongside it.
+
+The service layer logs this at **error** level when it happens (`service layer not initialized:
+Approov pin matching skipped for <host>`), so the condition is visible in production rather than
+silent. Bypass mode logs the equivalent line at info, since that case is a configuration choice.
+
 ---
 
 ## Token Binding
