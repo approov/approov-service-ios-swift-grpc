@@ -279,6 +279,22 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
         let signer = ApproovDefaultMessageSigning().setDefaultFactory(factory)
         ApproovService.setServiceMutator(signer)
 
+        // Positive control FIRST: the same signer on a PROTECTED host must actually sign. Without
+        // this, the negative assertions below pass if signing is deleted, if the mutator is never
+        // installed, or if updateRequestHeaders returns its input untouched - the test would prove
+        // nothing about "skipped *because* unprotected".
+        let protected = try ApproovService.updateRequestHeaders(
+            headers: [:], hostname: targetURLString, path: "/echo.Echo/Get")
+        XCTAssertNotNil(protected.first(name: "Approov-Token"),
+                        "a protected host must still receive a token")
+        let protectedSignature = protected.first(name: "Signature")
+        XCTAssertNotNil(protectedSignature,
+                        "the signer must sign a protected request, otherwise the negative case below is vacuous")
+        XCTAssertNotNil(protected.first(name: "Signature-Input"))
+        // RFC 8941 byte sequence, per TESTING_REQUIREMENTS.md section 5: install=:<base64>:
+        XCTAssertTrue(protectedSignature?.contains("=:") == true,
+                      "expected a byte-sequence signature, got \(protectedSignature ?? "nil")")
+
         // A host that is not in the protected domains yields no Approov token, so there is nothing to
         // sign and no Signature header must be added.
         let updated = try ApproovService.updateRequestHeaders(
@@ -287,6 +303,23 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
         XCTAssertNil(updated.first(name: "Approov-Token"))
         XCTAssertNil(updated.first(name: "Signature"))
         XCTAssertNil(updated.first(name: "Signature-Input"))
+    }
+
+    func testTargetUriIsNotDoublePrefixedWhenHostnameCarriesAScheme() throws {
+        // The documented integration passes a bare host, but the exclusion matcher tolerates a
+        // scheme-bearing one, so the signing components must too. Before this was fixed
+        // getTargetUri() returned "https://https://grpc.example.com/echo.Echo/Get" for the shape
+        // these very tests pass, producing a signature base no backend could reconstruct.
+        let bare = ApproovGRPCComponentProvider(
+            request: ApproovRequest(hostname: targetHost, headers: [:], path: "/echo.Echo/Get"))
+        let prefixed = ApproovGRPCComponentProvider(
+            request: ApproovRequest(hostname: targetURLString, headers: [:], path: "/echo.Echo/Get"))
+
+        XCTAssertEqual(bare.getTargetUri(), "https://grpc.example.com/echo.Echo/Get")
+        XCTAssertEqual(prefixed.getTargetUri(), bare.getTargetUri(),
+                       "a scheme-bearing hostname must yield the same target URI as a bare one")
+        XCTAssertEqual(prefixed.getAuthority(), targetHost,
+                       "@authority must never carry a scheme")
     }
 
     func testUnsupportedSigningAlgorithmFailsClosed() throws {

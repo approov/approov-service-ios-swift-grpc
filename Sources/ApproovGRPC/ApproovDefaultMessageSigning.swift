@@ -542,16 +542,38 @@ public class ApproovGRPCComponentProvider: ComponentProvider {
         return "POST"
     }
 
+    /// The authority (host, and port when non-default) with any scheme prefix removed.
+    ///
+    /// The documented integration passes a bare host - `ClientInterceptorFactory(hostname:)`, see
+    /// USAGE.md - but a defensive integrator may pass "https://host", and the exclusion matcher in
+    /// ApproovServiceMutator already tolerates both. These components must agree with it: signing a
+    /// `@target-uri` of "https://https://host/path" would produce a signature base no backend can
+    /// reconstruct, and it is exactly the shape the tests were passing.
+    private var normalizedAuthority: String {
+        let hostname = request.hostname
+        let lower = hostname.lowercased()
+        for scheme in ["https://", "http://"] where lower.hasPrefix(scheme) {
+            return String(hostname.dropFirst(scheme.count))
+        }
+        return hostname
+    }
+
     public func getAuthority() -> String {
-        return request.hostname
+        return normalizedAuthority
     }
 
     public func getScheme() -> String {
         return "https"
     }
 
+    /// NOTE ON PORTS: gRPC endpoints on a port other than 443 are not represented here, because the
+    /// port is supplied to `ApproovClientConnection.Builder.connect(host:port:)` and never reaches
+    /// the interceptor, which is constructed from a hostname alone. For such an endpoint a backend
+    /// that includes the port in its own `@target-uri` will compute a different signature base and
+    /// reject the signature. Carrying the port would require the interceptor to accept one, i.e. a
+    /// public API change; until then, message signing is supported on default-port endpoints.
     public func getTargetUri() -> String {
-        return "https://" + request.hostname + (request.path ?? "")
+        return "https://" + normalizedAuthority + (request.path ?? "")
     }
 
     public func getRequestTarget() -> String {
