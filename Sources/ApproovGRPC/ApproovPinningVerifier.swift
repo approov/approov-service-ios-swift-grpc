@@ -174,6 +174,31 @@ class ApproovPinningVerifier {
                 }
             }
             if isValidated {
+                if !ApproovService.isApproovEnabled() {
+                    // Approov pin matching is skipped. The OS certificate-chain check above has
+                    // already run, so this is a downgrade to standard TLS, not an unvalidated
+                    // connection. Two distinct states reach here and they are logged differently
+                    // on purpose, because only one of them is a deliberate configuration:
+                    //
+                    //  - empty-config bypass mode: intended, documented in USAGE.md, logged at info.
+                    //  - the service layer is not initialized (initialize() has not run yet, or it
+                    //    threw): NOT a configuration choice. A channel built before initialize()
+                    //    completes handshakes without Approov pinning for the life of that channel.
+                    //    Failing the handshake instead would break applications that legitimately
+                    //    build channels at startup, so the connection is allowed - but it is logged
+                    //    at error, because an unlogged fail-open is indistinguishable from a bug.
+                    if ApproovService.isInitialized() {
+                        if ApproovService.loggingLevel >= .info {
+                            os_log("ApproovService: bypass mode: Approov pin matching skipped for %@, OS certificate validation applied",
+                                   type: .info, self.securityFrameworkValidator.expectedHostname)
+                        }
+                    } else if ApproovService.loggingLevel >= .error {
+                        os_log("ApproovService: service layer not initialized: Approov pin matching skipped for %@, only OS certificate validation applied - initialize() before creating channels",
+                               type: .error, self.securityFrameworkValidator.expectedHostname)
+                    }
+                    promise.succeed(.certificateVerified)
+                    return
+                }
                 do {
                     let isVerified = try self.hasApproovPinMatch(host: self.securityFrameworkValidator.expectedHostname,
                         certChain: certChain)
@@ -197,9 +222,11 @@ class ApproovPinningVerifier {
      * @return Bool true if an Approov pin match was made
      */
     func hasApproovPinMatch(host: String, certChain: [NIOSSLCertificate]) throws -> Bool {
-        // Ensure pins are refreshed eventually
-        ApproovService.prefetch()
-        
+        // Use the current live Approov pins (read below via Approov.getPins). The Approov SDK
+        // refreshes its configuration out-of-band after an attestation/token fetch, so the pin set
+        // reflects any dynamic pin update for the app. This check runs during the TLS handshake, so
+        // a tightened pin set takes effect on the next (re)connection.
+
         // Get the certificate chain count
         for cert in certChain {
             // Get the current certificate from the chain

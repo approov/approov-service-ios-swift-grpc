@@ -127,7 +127,12 @@ extension ApproovClientConnection {
         /// Connect to `host` on `port`.
         public func connect(host: String, port: Int) -> ClientConnection {
             let securityFrameworkValidator = SecurityFrameworkValidator(trustRoots: .default, additionalTrustRoots: [], hostname: host)
-            let pinningVerifier = ApproovPinningVerifier(securityFrameworkValidator: securityFrameworkValidator)
+            let pinningVerifier: ApproovPinningVerifier
+            if let customCallback = niosslVerificationCallback {
+                pinningVerifier = ApproovPinningVerifier(securityFrameworkValidator: securityFrameworkValidator, verificationCallback: customCallback)
+            } else {
+                pinningVerifier = ApproovPinningVerifier(securityFrameworkValidator: securityFrameworkValidator)
+            }
             delegate.withTLSCustomVerificationCallback(pinningVerifier.verifyPinning)
             hostname = host
             return delegate.connect(host: host, port: port)

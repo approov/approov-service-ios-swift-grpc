@@ -21,6 +21,7 @@ import Approov
 import Foundation
 import GRPC
 import NIO
+import os.log
 
 public class ApproovClientInterceptor<Request, Reply>: ClientInterceptor<Request, Reply> {
 
@@ -40,13 +41,26 @@ public class ApproovClientInterceptor<Request, Reply>: ClientInterceptor<Request
         // The (user-provided) request headers, these are sent at the start of each RPC.
         case var .metadata(headers):
             do {
-                headers = try ApproovService.updateRequestHeaders(headers: headers, hostname: hostname)
+                // context.path is the RPC path (e.g. "/package.Service/Method") and is passed through
+                // so message signing can include the @path / @target-uri derived components.
+                headers = try ApproovService.updateRequestHeaders(headers: headers, hostname: hostname, path: context.path)
                 // Forward the request part to the next interceptor.
                 context.send(.metadata(headers), promise: promise)
             } catch {
+                // Log at error first: grpc-swift's own invocation path passes `promise: nil`
+                // (GRPC Call.swift `_send(.metadata(...), promise: nil)`), so `promise?.fail` is a
+                // no-op there and the application sees only a cancelled RPC with this error - and
+                // its rejection ARC - discarded. The log is the only place the cause survives.
+                if ApproovService.loggingLevel >= .error {
+                    os_log("ApproovService: request rejected before send for %@: %@", type: .error,
+                           hostname, error.localizedDescription)
+                }
+                // Fail the send promise so a caller that did supply one observes the error...
                 promise?.fail(error)
-                // Must not proceed with the network request - cancel it
-                context.cancel(promise: promise)
+                // ...then cancel the RPC so the network request does not proceed. Pass a fresh
+                // (nil) promise to cancel: reusing the already-failed `promise` would complete the
+                // same EventLoopPromise twice, which traps in SwiftNIO and crashes the client.
+                context.cancel(promise: nil)
             }
 
         // The request message and metadata (ignored here). For unary and server-streaming RPCs we

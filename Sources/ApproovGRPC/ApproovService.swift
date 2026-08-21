@@ -63,6 +63,20 @@ public enum ApproovError: Error, LocalizedError {
     }
 }
 
+/**
+ * Log level for controlling the verbosity of os_log output from the ApproovService
+ */
+public enum ApproovLogLevel: Int, Comparable {
+    case off = 0
+    case error = 1
+    case warning = 2
+    case info = 3
+    case debug = 4
+    public static func < (lhs: ApproovLogLevel, rhs: ApproovLogLevel) -> Bool {
+        return lhs.rawValue < rhs.rawValue
+    }
+}
+
 /** ApproovService provides a mediation layer to the Approov SDK itself */
 public class ApproovService {
 
@@ -75,43 +89,119 @@ public class ApproovService {
     /** Status of Approov SDK initialisation */
     private static var approovSDKInitialised = false
 
+    /** Current logging level */
+    private static var _loggingLevel: ApproovLogLevel = .info
+
+    public static var loggingLevel: ApproovLogLevel {
+        get {
+            stateLock.withLock { _loggingLevel }
+        }
+        set {
+            stateLock.withLock { _loggingLevel = newValue }
+        }
+    }
+
     /**
      * Initializes the ApproovService with an account configuration.
      *
-     * Note the initializer function should only ever be called once. Subsequent calls will be ignored since the
-     * Approov SDK can only be intialized once; if however, an attempt is made to initialize with a different
-     * configuration we throw an `ApproovError.configurationError`. If the Approov SDK fails to be initialized for some
-     * other reason, an `ApproovError.initializationFailure` is raised.
+     * Per TESTING_REQUIREMENTS §1 the service layer never short-circuits an initialization call
+     * carrying a non-empty config based on its own internal state: every non-empty config (including
+     * the same config with a different comment, or a different config) is forwarded directly to the
+     * native Approov SDK. If the SDK rejects the call the failure is surfaced and the service-layer
+     * state is left completely unchanged. If the SDK confirms success (or we are in empty-config
+     * bypass mode), the service-layer state is reset and re-applied — including resetting the custom
+     * service mutator to the default. An empty config after a valid config is the only case that is
+     * ignored without being forwarded.
      *
      * @param config the configuration string, or empty for no SDK initialization. The configuration string is obtained
      *               using `approov sdk -getConfigString` or through an Approov onboarding email.
+     * @param comment is an optional comment to be passed to the SDK.
      */
-    public static func initialize(config: String) throws {
-        if config.isEmpty {
-            return
-        }
+    public static func initialize(config: String, comment: String? = nil) throws {
         try initLock.withLock {
-            // Check if we attempt to use a different configString
-            if (approovSDKInitialised) {
-                if (config != approovConfigString) {
-                    // Throw exception indicating we are attempting to use different config
-                    let errorMessage = "Attempting to initialize with different configuration"
-                    os_log("ApproovService: %@", type: .error, errorMessage)
-                    throw ApproovError.configurationError(message: errorMessage)
+            let isEnabled = !config.isEmpty
+
+            // §1 Empty Configuration after Valid Configuration: once initialized with a valid
+            // non-empty config, a later empty-config init is ignored and NOT forwarded to the SDK.
+            if approovSDKInitialised && config.isEmpty && !((approovConfigString ?? "").isEmpty) {
+                if loggingLevel >= .info {
+                    os_log("ApproovService already initialized with a valid config; ignoring empty configuration", type: .info)
                 }
                 return
             }
-            // Initialize Approov SDK
-            do {
-                try Approov.initialize(config, updateConfig: "auto", comment: nil)
-                approovConfigString = config
-                approovSDKInitialised = true
-                Approov.setUserProperty("approov-service-grpc")
-            } catch let error {
-                // Log error and throw exception
-                let errorMessage = "Error initializing Approov SDK: \(error.localizedDescription)"
-                os_log("ApproovService: %@", type: .error, errorMessage)
-                throw ApproovError.initializationFailure(message: errorMessage)
+
+            // §1 Configuration Options and Forwarding Requirement: forward all non-empty configs to
+            // the native SDK without any internal short-circuit. State is only modified after the SDK
+            // confirms success, preserving the current operating mode (protected or bypass) on failure.
+            if isEnabled {
+                do {
+                    try Approov.initialize(config, updateConfig: "auto", comment: comment)
+                    if loggingLevel >= .info {
+                        os_log("ApproovService: Approov SDK initialized", type: .info)
+                    }
+                } catch {
+                    let nsError = error as NSError
+                    if nsError.code == 0, nsError.domain == "Foundation._GenericObjCError" {
+                        // §1 Same Config Re-initialization: the native SDK returned false (already
+                        // initialized with the same config). Swift bridges this BOOL=NO into a thrown
+                        // Foundation._GenericObjCError(code: 0); treat it as success.
+                        if loggingLevel >= .info {
+                            os_log("ApproovService: Approov SDK already initialized", type: .info)
+                        }
+                    } else {
+                        // §1 Different Non-empty Config Re-initialization / General Initialization
+                        // Failure: surface the failure and leave the service-layer state unchanged.
+                        let errorMessage = "Error initializing Approov SDK: \(nsError.localizedDescription)"
+                        os_log("ApproovService: %@", type: .error, errorMessage)
+                        throw ApproovError.initializationFailure(message: errorMessage)
+                    }
+                }
+            }
+
+            // §1 Service-Layer State Only Updated On Success: now that the platform SDK has
+            // confirmed success (or we are in empty-config bypass mode), reset and re-apply the
+            // service-layer state. This includes the §1 "Service Mutator Reset" requirement:
+            // the custom service mutator is reset to the default on every successful initialization.
+            approovSDKInitialised = false
+            approovConfigString = config
+
+            stateLock.withLock {
+                _proceedOnNetworkFail = false
+                _bindHeader = ""
+                _approovTokenHeader = "Approov-Token"
+                _approovTokenPrefix = ""
+                _approovTraceIDHeader = "Approov-TraceID"
+                _serviceMutator = ApproovServiceMutatorDefault.shared
+                _useApproovStatusIfNoToken = false
+                substitutionHeaders = [:]
+                exclusionURLRegexs = [:]
+            }
+
+            approovSDKInitialised = true
+            if isEnabled {
+                Approov.setUserProperty("approov-service-grpc/dev")
+            }
+        }
+    }
+
+    /**
+     * Resets the ApproovService state for testing.
+     * This is a testing requirement and has no production use case.
+     */
+    static func resetForTesting() {
+        initLock.withLock {
+            approovSDKInitialised = false
+            stateLock.withLock {
+                _approovConfigString = nil
+                _proceedOnNetworkFail = false
+                _bindHeader = ""
+                _approovTokenHeader = "Approov-Token"
+                _approovTokenPrefix = ""
+                _approovTraceIDHeader = "Approov-TraceID"
+                _serviceMutator = ApproovServiceMutatorDefault.shared
+                _useApproovStatusIfNoToken = false
+                substitutionHeaders = [:]
+                exclusionURLRegexs = [:]
             }
         }
     }
@@ -130,6 +220,7 @@ public class ApproovService {
      * this should be used with caution because it may allow a connection to be established
      * before any dynamic pins have been received via Approov, thus potentially opening the channel to a MitM.
      */
+    @available(*, deprecated, message: "No longer used internally. Use setServiceMutator to customize network failure behavior.")
     public static var proceedOnNetworkFail: Bool {
         get {
             var proceedOnNetworkFail = false
@@ -148,6 +239,18 @@ public class ApproovService {
     /** Map of names for headers that should have their values substituted for secure strings, mapped to their
      * required prefixes */
     private static var substitutionHeaders: Dictionary<String, String> = [:]
+
+    /** Set of URL regexs that should be excluded from any Approov protection, mapped to the compiled pattern */
+    private static var exclusionURLRegexs: Dictionary<String, NSRegularExpression> = [:]
+
+    /** Approov TraceID optional header */
+    private static var _approovTraceIDHeader: String? = "Approov-TraceID"
+
+    /** Use Approov fetch status if token is empty */
+    private static var _useApproovStatusIfNoToken = false
+
+    /** The mutator instance used to control ApproovService behavior at key points in the flow. */
+    private static var _serviceMutator: ApproovServiceMutator = ApproovServiceMutatorDefault.shared
 
     /** Bind Header string */
     private static var _bindHeader = ""
@@ -205,23 +308,124 @@ public class ApproovService {
         }
     }
 
-    /** Initialization configuration string. NOTE this must only ever be written to ONCE since Approov SDK can only
-     * be initialized once */
+    /** Initialization configuration string used for the current initialization. This is committed
+     * on every successful init (including same-config reinit and bypass→protected upgrade) so the
+     * service-layer state reflects the most recently accepted configuration. */
     private static var _approovConfigString: String?
 
     // Public setter/getter for configuration
     static var approovConfigString: String? {
         set (newValue) {
             stateLock.withLock {
-                if (_approovConfigString == nil) {
-                    _approovConfigString = newValue
-                }
+                _approovConfigString = newValue
             }
         }
         get {
             stateLock.withLock {
                 return _approovConfigString
             }
+        }
+    }
+
+    /**
+     * Returns true if Approov is initialized and enabled (i.e. has a valid configuration).
+     */
+    public static func isApproovEnabled() -> Bool {
+        // Read under initLock: initialize() clears this flag, resets state, then sets it again, so an
+        // unsynchronised read can observe the window in between and report "not enabled" while the
+        // process is protected - which silently drops the token from a request and Approov pinning
+        // from a handshake. It is also a data race: this is read from NIO event loops, the pinning
+        // callback queue and application threads while initialize() writes it.
+        guard initLock.withLock({ approovSDKInitialised }) else { return false }
+        let config = approovConfigString ?? ""
+        return !config.isEmpty
+    }
+
+    /**
+     * Indicates whether the service layer has been initialized. Returns true once initialized,
+     * including empty-config bypass mode (i.e. reflects approovSDKInitialised).
+     */
+    public static func isInitialized() -> Bool {
+        initLock.withLock {
+            approovSDKInitialised
+        }
+    }
+
+    /**
+     * Sets the header that the optional Approov Trace ID is added on. Pass nil to disable the
+     * emission of the Trace ID header. By default the Trace ID is provided on "Approov-TraceID".
+     */
+    public static func setApproovTraceIDHeader(header: String?) {
+        stateLock.withLock {
+            _approovTraceIDHeader = header
+        }
+    }
+
+    public static func getApproovTraceIDHeader() -> String? {
+        stateLock.withLock { _approovTraceIDHeader }
+    }
+
+    /**
+     * When enabled, if an Approov token cannot be fetched the service layer injects the fetch
+     * status string into the token header to provide visibility to the backend, unless a custom
+     * mutator blocks the request.
+     */
+    public static func setUseApproovStatusIfNoToken(shouldUse: Bool) {
+        stateLock.withLock {
+            _useApproovStatusIfNoToken = shouldUse
+        }
+    }
+
+    public static func getUseApproovStatusIfNoToken() -> Bool {
+        stateLock.withLock { _useApproovStatusIfNoToken }
+    }
+
+    /**
+     * Installs a custom mutator to override the default fail-closed behavior at key points in
+     * the service and attestation flows. Pass nil to restore the default mutator.
+     */
+    public static func setServiceMutator(_ mutator: ApproovServiceMutator?) {
+        stateLock.withLock {
+            _serviceMutator = mutator ?? ApproovServiceMutatorDefault.shared
+        }
+    }
+
+    public static func getServiceMutator() -> ApproovServiceMutator {
+        stateLock.withLock { _serviceMutator }
+    }
+
+    /**
+     * Logs that an Approov-dependent method was invoked while the platform SDK is not active,
+     * distinguishing "initialized in bypass mode (empty config)" from "service layer not
+     * initialized at all" so the two states can be told apart in the logs.
+     */
+    private static func logApproovUnavailable(_ method: String) {
+        guard loggingLevel >= .error else {
+            return
+        }
+        let initialized = isInitialized()
+        let enabled = isApproovEnabled()
+        if initialized && !enabled {
+            os_log("ApproovService: %@: Approov is disabled (initialized in bypass mode); ignoring call",
+                   type: .error, method)
+        } else {
+            os_log("ApproovService: %@: service layer not initialized", type: .error, method)
+        }
+    }
+
+    /**
+     * Runs a throwing operation (typically a service mutator callback) and guarantees that any
+     * error escaping is an `ApproovError`. A custom mutator may throw an arbitrary `Error`; this
+     * wraps such values as `ApproovError.permanentError` so the documented public throwing
+     * contract holds.
+     */
+    private static func wrappingApproovError<T>(_ context: String, _ body: () throws -> T) throws -> T {
+        do {
+            return try body()
+        } catch let error as ApproovError {
+            throw error
+        } catch {
+            throw ApproovError.permanentError(message: "\(context): \(error.localizedDescription)")
         }
     }
 
@@ -236,23 +440,23 @@ public class ApproovService {
      * @param devKey is the development key to be used
      */
     public static func setDevKey(devKey: String) {
+        if !isApproovEnabled() {
+            logApproovUnavailable("setDevKey")
+            return
+        }
         Approov.setDevKey(devKey)
-        os_log("ApproovService: setDevKey", type: .debug)
+        if loggingLevel >= .debug {
+            os_log("ApproovService: setDevKey", type: .debug)
+        }
     }
 
     /**
-     * Allows token prefetch operation to be performed as early as possible. This permits a token to be available while
-     * an application might be loading resources or is awaiting user input. Since the initial token fetch is the most
-     * expensive the prefetch can hide the most latency.
+     * Obsolete. This method is obsolete and no longer has any effect. The platform SDK manages prefetching automatically.
      */
+    @available(*, deprecated, message: "Obsolete. The platform SDK manages prefetching automatically.")
     public static func prefetch() {
-        initLock.withLock {
-            if approovSDKInitialised {
-                // We succeeded initializing Approov SDK, fetch a token
-                Approov.fetchToken({(approovResult: ApproovTokenFetchResult) in
-                    // Prefetch done, no need to process response
-                }, "approov.io")
-            }
+        if loggingLevel >= .info {
+            os_log("ApproovService: prefetch is obsolete and does nothing", type: .info)
         }
     }
 
@@ -270,118 +474,223 @@ public class ApproovService {
      * @return headers passed in, or modified by adding an Approov token header and new header values if required
      * @throws ApproovError if it is not possible to obtain secure strings for substitution
      */
-    public static func updateRequestHeaders(headers: HPACKHeaders, hostname: String) throws -> HPACKHeaders {
+    public static func updateRequestHeaders(headers: HPACKHeaders, hostname: String, path: String? = nil) throws -> HPACKHeaders {
+        let request = ApproovRequest(hostname: hostname, headers: headers, path: path)
+        let response = updateRequestWithApproov(request: request)
+        if let error = response.error {
+            throw error
+        }
+        switch response.decision {
+        case .ShouldProceed, .ShouldIgnore:
+            return response.request.headers
+        case .ShouldRetry:
+            throw ApproovError.networkingError(message: "Token fetch for \(hostname): \(response.sdkMessage)")
+        case .ShouldFail:
+            throw ApproovError.permanentError(message: "Token fetch for \(hostname): \(response.sdkMessage)")
+        }
+    }
+
+    /**
+     * Maps an error thrown by a mutator callback (or internal processing) onto a decision and an
+     * error on the response. Networking errors map to ShouldRetry; everything else to ShouldFail.
+     */
+    private static func applyMutatorError(_ error: Error,
+                                          response: inout ApproovUpdateResponse,
+                                          context: String) {
+        if let approovError = error as? ApproovError {
+            response.error = approovError
+            switch approovError {
+            case .networkingError:
+                response.decision = .ShouldRetry
+            default:
+                response.decision = .ShouldFail
+            }
+        } else {
+            response.error = ApproovError.permanentError(message: "\(context): \(error.localizedDescription)")
+            response.decision = .ShouldFail
+        }
+    }
+
+    /**
+     * Mutator-integrated request processing. Builds an ApproovRequest, runs the configured
+     * service mutator at each decision point (exclusion, token fetch, header substitution and
+     * the final processed-request hook) and returns the resulting decision and mutated request.
+     *
+     * gRPC carries no URL/query/body at the interceptor layer, so only header-based mutation and
+     * (hostname-based) exclusion matching are performed.
+     */
+    public static func updateRequestWithApproov(request: ApproovRequest) -> ApproovUpdateResponse {
+        let hostname = request.hostname
+        let changes = ApproovRequestMutations()
+
+        if !isApproovEnabled() {
+            if loggingLevel >= .info {
+                os_log("ApproovService: Approov unavailable, forwarding: %@", type: .info, hostname)
+            }
+            return ApproovUpdateResponse(request: request, decision: .ShouldIgnore, sdkMessage: "", error: nil)
+        }
+
+        let mutator = getServiceMutator()
+
+        // Exclusion check: an excluded request is forwarded without any mutation.
+        do {
+            if try !mutator.handleInterceptorShouldProcessRequest(request) {
+                if loggingLevel >= .info {
+                    os_log("ApproovService: excluded, forwarding: %@", type: .info, hostname)
+                }
+                return ApproovUpdateResponse(request: request, decision: .ShouldIgnore, sdkMessage: "", error: nil)
+            }
+        } catch {
+            var response = ApproovUpdateResponse(request: request, decision: .ShouldFail, sdkMessage: "", error: nil)
+            applyMutatorError(error, response: &response, context: "Interceptor should process request")
+            return response
+        }
+
+        var response = ApproovUpdateResponse(request: request, decision: .ShouldFail, sdkMessage: "", error: nil)
+        let allHeaders = request.headers
+
         // Check if Bind Header is set to a non empty string
-        if bindHeader != "" {
-            if let aValue = headers.first(name: bindHeader) {
-                // Add the Bind Header as a data hash to Approov token
-                Approov.setDataHashInToken(aValue)
+        let bindHeaderName = stateLock.withLock { _bindHeader }
+        if bindHeaderName != "" {
+            if let value = allHeaders.first(name: bindHeaderName) {
+                Approov.setDataHashInToken(value)
             }
         }
-        
+
         // Fetch the Approov token
-        let result: ApproovTokenFetchResult = Approov.fetchTokenAndWait(hostname)
-        os_log("ApproovService: update headers %@: %@", type: .info, hostname, result.loggableToken())
-
-        // Log if a configuration update is received and call fetchConfig to clear the update state
-        if result.isConfigChanged {
+        let approovResult = Approov.fetchTokenAndWait(hostname)
+        if loggingLevel >= .info {
+            os_log("ApproovService: update headers %@: %@", type: .info, hostname, approovResult.loggableToken())
+        }
+        if approovResult.isConfigChanged {
             Approov.fetchConfig()
-            os_log("ApproovService: dynamic configuration update received")
-        }
-        
-        // Handle the Approov token fetch response
-        var updatedHeaders: HPACKHeaders = [:]
-        switch result.status {
-        case .success:
-            // Can go ahead and make the API call with the provided request object
-            // Set Approov-Token header
-            updatedHeaders.add(name: approovTokenHeaderAndPrefix.approovTokenHeader,
-                value: approovTokenHeaderAndPrefix.approovTokenPrefix + result.token)
-            break
-        case .noNetwork,
-             .poorNetwork,
-             .mitmDetected:
-            // We are unable to get an Approov token due to network conditions so - unless this is overridden - we must
-            // not proceed with the network request. The request can be retried by the user later.
-            if !proceedOnNetworkFail {
-                throw ApproovError.networkingError(message: "Token fetch for " + hostname + ": " +
-                    Approov.string(from: result.status))
+            if loggingLevel >= .info {
+                os_log("ApproovService: dynamic configuration update received")
             }
-        case .unprotectedURL,
-             .unknownURL,
-             .noApproovService:
-            // We do NOT add the Approov-Token header to the request headers and proceed
-            break
-        default:
-            // We have failed to get an Approov token with a more serious permanent error
-            throw ApproovError.permanentError(message: "Token fetch for " + hostname + ": " +
-                Approov.string(from: result.status))
         }
 
-        // We only continue additional processing if we had a valid status from Approov, to prevent additional delays
-        // by trying to fetch from Approov again and this also protects against header substitutions in domains not
-        // protected by Approov and therefore are potentially subject to a MitM.
-        if (result.status != .success) && (result.status != .unprotectedURL) {
-            return updatedHeaders;
+        response.sdkMessage = Approov.string(from: approovResult.status)
+
+        var setTokenHeaderKey: String?
+        var setTokenHeaderValue: String?
+        var setTraceIDHeaderKey: String?
+        var setTraceIDHeaderValue: String?
+
+        var shouldAddToken = false
+        do {
+            shouldAddToken = try mutator.handleInterceptorFetchTokenResult(approovResult, url: hostname)
+            response.decision = .ShouldProceed
+        } catch {
+            applyMutatorError(error, response: &response, context: "Approov token fetch")
+            return response
         }
 
-        // Deal with any header substitutions, which may require further fetches but these should be using cached
-        // results
-        for headerIndex in headers.indices {
-            let headerName = headers[headerIndex].name
-            var headerValue = headers[headerIndex].value
-            // Check whether header is eligible for substitution
-            var substHeaderValuePrefix: String?
-            stateLock.withLock {
-                substHeaderValuePrefix = substitutionHeaders[headerName]
+        if !shouldAddToken {
+            // The mutator declined to add a token. What happens to the rest of the pipeline depends
+            // on WHY, and the two cases are not interchangeable:
+            //
+            //  - unknownURL / unprotectedURL: the domain is not Approov-protected, so nothing is
+            //    processed. Resolving a substitution placeholder here would send the real secret to
+            //    a host Approov neither tokenizes nor pins, which is the exposure
+            //    TESTING_REQUIREMENTS.md section 2 "Unprotected Request Processing" forbids.
+            //
+            //  - anything else, in practice noApproovService: the domain IS protected, the SDK just
+            //    could not produce a token. Substitutions must still be attempted so the
+            //    substitution handler's own policy applies - for noApproovService that policy is
+            //    fail closed (section 3), because the alternative is transmitting the lookup key as
+            //    the credential. Returning here would leave that policy unreachable and the
+            //    placeholder on the wire with no error and no log.
+            switch approovResult.status {
+            case .unknownURL, .unprotectedURL:
+                return response
+            default:
+                if loggingLevel >= .error {
+                    os_log("ApproovService: no token added for %@ (%@); still applying substitution policy",
+                           type: .error, hostname, Approov.string(from: approovResult.status))
+                }
             }
-            if substHeaderValuePrefix != nil {
-                // We need to check whether there is a substitution available in Approov
-                // Remove prefix from header value before lookup
-                if (substHeaderValuePrefix!.count > 0 && headerValue.hasPrefix(substHeaderValuePrefix!)) {
-                    headerValue.removeFirst(substHeaderValuePrefix!.count)
-                }
-                // Look up header value in Approov
-                let approovResults = Approov.fetchSecureStringAndWait(String(headerValue), nil)
-                os_log("ApproovService: Substituting header: %@, %@", type: .info, headerName,
-                    Approov.string(from: approovResults.status))
-                // Process the result of the secure string fetch operation
-                switch approovResults.status {
-                case .success:
-                    // Add the modified header to the updated headers
-                    if let secureStringResult = approovResults.secureString {
-                        updatedHeaders.add(name: headerName,
-                                           value: substHeaderValuePrefix! + secureStringResult)
-                    } else {
-                        // Secure string is nil
-                        throw ApproovError.permanentError(message: "Header substitution: key lookup error")
-                    }
-                case .rejected:
-                    // If the request is rejected then we provide a special exception with additional information
-                    throw ApproovError.rejectionError(message: "Header substitution: rejected",
-                        ARC: approovResults.arc, rejectionReasons: approovResults.rejectionReasons)
-                case .noNetwork,
-                     .poorNetwork,
-                     .mitmDetected:
-                    // We are unable to get the secure string due to network conditions, so - unless this is overridden
-                    // - we mustnot proceed. The request can be retried by the user later.
-                    if !proceedOnNetworkFail {
-                        throw ApproovError.networkingError(message: "Header substitution: network issue, retry needed")
-                    }
-                case .unknownKey:
-                    // We have failed to get a secure string with a more serious permanent error
-                    throw ApproovError.permanentError(message: "Header substitution: " +
-                        Approov.string(from: approovResults.status))
-                default:
-                    // Add the original header to the updated headers
-                    updatedHeaders.add(name: headerName, value: substHeaderValuePrefix! + headerValue)
-                }
+        }
+
+        if shouldAddToken {
+            let tokenHeader = stateLock.withLock { _approovTokenHeader }
+            let tokenPrefix = stateLock.withLock { _approovTokenPrefix }
+            setTokenHeaderKey = tokenHeader
+            if approovResult.token.isEmpty && (stateLock.withLock { _useApproovStatusIfNoToken }) {
+                // §2 Token Fallback Status: surface the fetch status to the backend in place of a token.
+                setTokenHeaderValue = tokenPrefix + response.sdkMessage
             } else {
-                // No substitution defined, copy original header
-                updatedHeaders.add(name: headerName, value: headerValue)
+                setTokenHeaderValue = tokenPrefix + approovResult.token
+            }
+
+            // Emit the trace-ID header if a trace-ID header name is configured. §2 Missing Artifacts
+            // Fallback: emit it even when the SDK returns an empty trace ID, so the backend still sees
+            // evidence that Approov processing occurred (mirrors the token header, always emitted).
+            if let traceHeader = stateLock.withLock({ _approovTraceIDHeader }), !traceHeader.isEmpty {
+                setTraceIDHeaderKey = traceHeader
+                setTraceIDHeaderValue = approovResult.traceID
             }
         }
-        return updatedHeaders
+
+        // Deal with header substitutions, which may require further fetches but these should be
+        // using cached results.
+        var setSubstitutionHeaders: [String: String] = [:]
+        let subsHeadersCopy = getSubstitutionHeaders()
+        for (header, prefix) in subsHeadersCopy {
+            if let value = allHeaders.first(name: header) {
+                if value.hasPrefix(prefix) && (value.count > prefix.count) {
+                    let lookupKey = String(value.dropFirst(prefix.count))
+                    let approovResults = Approov.fetchSecureStringAndWait(lookupKey, nil)
+                    if loggingLevel >= .info {
+                        os_log("ApproovService: Substituting header: %@, %@", type: .info, header,
+                               Approov.string(from: approovResults.status))
+                    }
+                    do {
+                        if try mutator.handleInterceptorHeaderSubstitutionResult(approovResults, header: header) {
+                            if let secureStringResult = approovResults.secureString {
+                                if !secureStringResult.isEmpty {
+                                    setSubstitutionHeaders[header] = prefix + secureStringResult
+                                }
+                            } else {
+                                response.decision = .ShouldFail
+                                response.error = ApproovError.permanentError(message: "Header substitution: key lookup error")
+                                return response
+                            }
+                        }
+                    } catch {
+                        applyMutatorError(error, response: &response, context: "Header substitution for \(header)")
+                        return response
+                    }
+                }
+            }
+        }
+
+        // Apply all of the changes to the request.
+        if let tokenHeaderKey = setTokenHeaderKey,
+           let tokenHeaderValue = setTokenHeaderValue {
+            response.request.headers.replaceOrAdd(name: tokenHeaderKey, value: tokenHeaderValue)
+            changes.setTokenHeaderKey(tokenHeaderKey)
+        }
+        if let traceIDHeaderKey = setTraceIDHeaderKey,
+           let traceIDHeaderValue = setTraceIDHeaderValue {
+            response.request.headers.replaceOrAdd(name: traceIDHeaderKey, value: traceIDHeaderValue)
+            changes.setTraceIDHeaderKey(traceIDHeaderKey)
+        }
+        if !setSubstitutionHeaders.isEmpty {
+            for (header, value) in setSubstitutionHeaders {
+                response.request.headers.replaceOrAdd(name: header, value: value)
+            }
+            changes.setSubstitutionHeaderKeys(Array(setSubstitutionHeaders.keys))
+        }
+
+        // Call the processed request callback for any final modifications.
+        do {
+            response.request = try mutator.handleInterceptorProcessedRequest(response.request, changes: changes)
+        } catch {
+            applyMutatorError(error, response: &response, context: "Interceptor processed request")
+            return response
+        }
+
+        return response
     }
 
     /**
@@ -417,6 +726,55 @@ public class ApproovService {
         }
     }
 
+    public static func getSubstitutionHeaders() -> Dictionary<String, String> {
+        stateLock.withLock { substitutionHeaders }
+    }
+
+    /**
+     * Adds an exclusion URL regular expression. Requests whose URL matches any registered
+     * exclusion regex are forwarded by the interceptor without Approov request mutation.
+     *
+     * gRPC has no natural request URL at the interceptor layer, so the regex is matched against
+     * the request hostname (or "https://<hostname><path>" if a path is available). This is a
+     * limitation of the gRPC adaptation compared to URL-based service layers.
+     */
+    public static func addExclusionURLRegex(urlRegex: String) {
+        stateLock.withLock {
+            do {
+                let regex = try NSRegularExpression(pattern: urlRegex, options: [])
+                exclusionURLRegexs[urlRegex] = regex
+                if _loggingLevel >= .debug {
+                    os_log("ApproovService: addExclusionURLRegex: %@", type: .debug, urlRegex)
+                }
+            } catch {
+                // The pattern was rejected and no exclusion was registered; surface this at error
+                // level so callers are not left believing an invalid regex took effect.
+                if _loggingLevel >= .error {
+                    os_log("ApproovService: addExclusionURLRegex: %@ rejected, exclusion NOT added: %@",
+                           type: .error, urlRegex, error.localizedDescription)
+                }
+            }
+        }
+    }
+
+    /**
+     * Removes an exclusion URL regular expression previously added using addExclusionURLRegex.
+     */
+    public static func removeExclusionURLRegex(urlRegex: String) {
+        stateLock.withLock {
+            if exclusionURLRegexs[urlRegex] != nil {
+                exclusionURLRegexs.removeValue(forKey: urlRegex)
+                if _loggingLevel >= .debug {
+                    os_log("ApproovService: removeExclusionURLRegex: %@", type: .debug, urlRegex)
+                }
+            }
+        }
+    }
+
+    public static func getExclusionURLRegexs() -> Dictionary<String, NSRegularExpression> {
+        stateLock.withLock { exclusionURLRegexs }
+    }
+
     /**
      * Gets the device ID used by Approov to identify the particular device that the SDK is running on. Note
      * that different Approov apps on the same device will return a different ID. Moreover, the ID may be
@@ -426,8 +784,14 @@ public class ApproovService {
      * @throws ApproovError if there was a problem
      */
     public static func getDeviceID() throws -> String {
+        if !isApproovEnabled() {
+            logApproovUnavailable("getDeviceID")
+            throw ApproovError.permanentError(message: "getDeviceID: SDK not initialized")
+        }
         if let deviceID: String = Approov.getDeviceID() {
-            os_log("ApproovService: getDeviceID: %@", type: .debug, deviceID)
+            if loggingLevel >= .debug {
+                os_log("ApproovService: getDeviceID: %@", type: .debug, deviceID)
+            }
             return deviceID
         }
         throw ApproovError.runtimeError(message: "getDeviceID: no device ID")
@@ -443,8 +807,14 @@ public class ApproovService {
      * @param data is the data to be hashed and set in the token
      */
     public static func setDataHashInToken(data: String) {
+        if !isApproovEnabled() {
+            logApproovUnavailable("setDataHashInToken")
+            return
+        }
         Approov.setDataHashInToken(data)
-        os_log("ApproovService: setDataHashInToken", type: .debug)
+        if loggingLevel >= .debug {
+            os_log("ApproovService: setDataHashInToken", type: .debug)
+        }
     }
 
     /**
@@ -461,24 +831,18 @@ public class ApproovService {
      * @throws ApproovError if there was a problem
      */
     public static func fetchToken(url: String) throws -> String {
-        // Fetch the Approov token
-        let result: ApproovTokenFetchResult = Approov.fetchTokenAndWait(url)
-        os_log("ApproovService: fetchToken: %@", type: .debug, Approov.string(from: result.status))
-
-        // Process the status
-        switch result.status {
-        case .success:
-            // Provide the Approov token result
-            return result.token
-        case .noNetwork,
-             .poorNetwork,
-             .mitmDetected:
-            // We are unable to get an Approov token due to network conditions
-            throw ApproovError.networkingError(message: "fetchToken: " + Approov.string(from: result.status))
-        default:
-            // We have failed to get an Approov token due to a more permanent error
-            throw ApproovError.permanentError(message: "fetchToken: " + Approov.string(from: result.status))
+        if !isApproovEnabled() {
+            logApproovUnavailable("fetchToken")
+            throw ApproovError.permanentError(message: "fetchToken: SDK not initialized")
         }
+        let result: ApproovTokenFetchResult = Approov.fetchTokenAndWait(url)
+        if loggingLevel >= .debug {
+            os_log("ApproovService: fetchToken: %@", type: .debug, Approov.string(from: result.status))
+        }
+        try wrappingApproovError("fetchToken") {
+            try getServiceMutator().handleFetchTokenResult(result)
+        }
+        return result.token
     }
 
     /**
@@ -494,12 +858,39 @@ public class ApproovService {
      * @return String of the base64 encoded message signature
      * @throws ApproovError if there was a problem
      */
+    @available(*, deprecated, message: "Use getAccountMessageSignature or getInstallMessageSignature instead.")
     public static func getMessageSignature(message: String) throws -> String {
-        if let signature: String = Approov.getMessageSignature(message) {
-            os_log("ApproovService: getMessageSignature", type: .debug)
-            return signature
+        guard let signature = getAccountMessageSignature(message: message) else {
+            throw ApproovError.permanentError(message: "getMessageSignature: no signature available")
         }
-        throw ApproovError.permanentError(message: "getMessageSignature: no signature available");
+        return signature
+    }
+
+    /**
+     * Gets the account message signature for the given message. This uses an account specific
+     * message signing key transmitted to the SDK after a successful fetch if the facility is
+     * enabled for the account. Returns nil if no signature is available (no prior fetch, the
+     * feature is not enabled, or the service layer is in bypass mode).
+     */
+    public static func getAccountMessageSignature(message: String) -> String? {
+        if !isApproovEnabled() {
+            logApproovUnavailable("getAccountMessageSignature")
+            return nil
+        }
+        return Approov.getMessageSignature(message)
+    }
+
+    /**
+     * Gets the install message signature for the given message. This uses an install specific
+     * signing key. Returns nil if no signature is available (e.g. key pair generation is not
+     * supported on the device) or if the service layer is in bypass mode.
+     */
+    public static func getInstallMessageSignature(message: String) -> String? {
+        if !isApproovEnabled() {
+            logApproovUnavailable("getInstallMessageSignature")
+            return nil
+        }
+        return Approov.getInstallMessageSignature(message)
     }
 
     /**
@@ -522,38 +913,18 @@ public class ApproovService {
      * @throws exception with description of cause
      */
     public static func fetchSecureString(key: String, newDef: String?) throws -> String? {
-        // Determine the type of operation as the values themselves cannot be logged
-        var type = "lookup"
-        if newDef != nil {
-            type = "definition"
+        if !isApproovEnabled() {
+            logApproovUnavailable("fetchSecureString")
+            throw ApproovError.permanentError(message: "fetchSecureString: SDK not initialized")
         }
-        // Fetch the secure string
+        // Determine the type of operation as the values themselves cannot be logged
+        let type = newDef != nil ? "definition" : "lookup"
         let approovResult = Approov.fetchSecureStringAndWait(key, newDef)
-        os_log("ApproovService: fetchSecureString: %@: %@", type: .info, type, Approov.string(from: approovResult.status))
-        // Process the returned Approov status
-        switch approovResult.status {
-        case .success,
-            .unknownKey:
-            break
-        case .disabled:
-            throw ApproovError.configurationError(message: "fetchSecureString: secure string feature disabled")
-        case .badKey:
-            throw ApproovError.permanentError(message: "fetchSecureString: secure string unknown key")
-        case .rejected:
-            // If the request is rejected then we provide a special exception with additional information
-            throw ApproovError.rejectionError(message: "fetchSecureString: rejected", ARC: approovResult.arc,
-                rejectionReasons: approovResult.rejectionReasons)
-        case .noNetwork,
-            .poorNetwork,
-            .mitmDetected:
-            // We are unable to get the secure string due to network conditions so the request can
-            // be retried by the user later
-            throw ApproovError.networkingError(message: "fetchSecureString: network issue, retry needed")
-        default:
-            // We are unable to get the secure string due to a more permanent error
-            throw ApproovError.permanentError(message: "fetchSecureString: " +
-                Approov.string(from: approovResult.status))
-
+        if loggingLevel >= .info {
+            os_log("ApproovService: fetchSecureString: %@: %@", type: .info, type, Approov.string(from: approovResult.status))
+        }
+        try wrappingApproovError("fetchSecureString \(type) for \(key)") {
+            try getServiceMutator().handleFetchSecureStringResult(approovResult, operation: type, key: key)
         }
         return approovResult.secureString
     }
@@ -573,31 +944,16 @@ public class ApproovService {
      * @throws exception with description of cause
      */
     public static func fetchCustomJWT(payload: String) throws -> String {
-        // Fetch the custom JWT
+        if !isApproovEnabled() {
+            logApproovUnavailable("fetchCustomJWT")
+            throw ApproovError.permanentError(message: "fetchCustomJWT: SDK not initialized")
+        }
         let approovResult = Approov.fetchCustomJWTAndWait(payload)
-        // Log result of token fetch operation but do not log the value
-        os_log("ApproovService: fetchCustomJWT: %@", type: .info, Approov.string(from: approovResult.status))
-        // Process the returned Approov status
-        switch approovResult.status {
-        case .success:
-            break
-        case .badPayload:
-            throw ApproovError.permanentError(message: "fetchCustomJWT: malformed JSON")
-        case .disabled:
-            throw ApproovError.configurationError(message: "fetchCustomJWT: feature not enabled")
-        case .rejected:
-            // If the request is rejected then we provide a special exception with additional information
-            throw ApproovError.rejectionError(message: "fetchCustomJWT: rejected", ARC: approovResult.arc,
-                rejectionReasons: approovResult.rejectionReasons)
-        case .noNetwork,
-            .poorNetwork,
-            .mitmDetected:
-            // We are unable to get the custom JWT due to network conditions so the request can
-            // be retried by the user later
-            throw ApproovError.networkingError(message: "fetchCustomJWT: network issue, retry needed")
-        default:
-            // We are unable to get the custom JWT due to a more permanent error
-            throw ApproovError.permanentError(message: "fetchCustomJWT: " + Approov.string(from: approovResult.status))
+        if loggingLevel >= .info {
+            os_log("ApproovService: fetchCustomJWT: %@", type: .info, Approov.string(from: approovResult.status))
+        }
+        try wrappingApproovError("fetchCustomJWT") {
+            try getServiceMutator().handleFetchCustomJWTResult(approovResult)
         }
         return approovResult.token
     }
@@ -613,26 +969,17 @@ public class ApproovService {
      * ApproovError.permanentError is raised.
      */
     public static func precheck() throws {
+        if !isApproovEnabled() {
+            logApproovUnavailable("precheck")
+            throw ApproovError.permanentError(message: "precheck: SDK not initialized")
+        }
         // Try to fetch a non-existent secure string in order to check for a rejection
         let approovResults = Approov.fetchSecureStringAndWait("precheck-dummy-key", nil)
-        // Process the returned Approov status
-        switch approovResults.status {
-        case .success,
-            .unknownKey:
-            break
-        case .rejected:
-            // If the request is rejected then we provide a special exception with additional information
-            throw ApproovError.rejectionError(message: "precheck: rejected", ARC: approovResults.arc,
-                rejectionReasons: approovResults.rejectionReasons)
-        case .noNetwork,
-            .poorNetwork,
-            .mitmDetected:
-            // We are unable to get the secure string due to network conditions so the request can
-            // be retried by the user later
-            throw ApproovError.networkingError(message: "precheck: network issue, retry needed")
-        default:
-            // We are unable to get the secure string due to a more permanent error
-            throw ApproovError.permanentError(message: "precheck: " + Approov.string(from: approovResults.status))
+        if loggingLevel >= .debug {
+            os_log("ApproovService: precheck: %@", type: .debug, Approov.string(from: approovResults.status))
+        }
+        try wrappingApproovError("precheck") {
+            try getServiceMutator().handlePrecheckResult(approovResults)
         }
     }
 
@@ -643,10 +990,16 @@ public class ApproovService {
      * @return String of the last ARC or empty string if there was none
      */
     public static func getLastARC() -> String {
+        if !isApproovEnabled() {
+            logApproovUnavailable("getLastARC")
+            return ""
+        }
         // We have to get the current config and obtain one protected API endpoint at least
         // get the dynamic pins from Approov
         guard let approovPins = Approov.getPins("public-key-sha256") else {
-            os_log("ApproovService: no host pinning information available", type: .error)
+            if loggingLevel >= .error {
+                os_log("ApproovService: no host pinning information available", type: .error)
+            }
             return ""
         }
         // The approovPins contains a map of hostnames to pin strings.  We need to skip the '*' entry (Managed Trust Roots),
@@ -658,7 +1011,9 @@ public class ApproovService {
                     return result.arc
                 }
             }
-        os_log("ApproovService: ARC code unavailable", type: .info)
+        if loggingLevel >= .info {
+            os_log("ApproovService: ARC code unavailable", type: .info)
+        }
         return ""
     }
 
@@ -672,8 +1027,14 @@ public class ApproovService {
     * @param attrs is the signed JWT holding the new install attributes
     */
     public static func setInstallAttributes(attrs: String) {
-        Approov.setInstallAttributes(attrs)
-        os_log("ApproovService: setInstallAttributes", type: .info)
+        if !isApproovEnabled() {
+            logApproovUnavailable("setInstallAttributes")
+            return
+        }
+        Approov.setInstallAttrsInToken(attrs)
+        if loggingLevel >= .info {
+            os_log("ApproovService: setInstallAttributes", type: .info)
+        }
     }
 
 }

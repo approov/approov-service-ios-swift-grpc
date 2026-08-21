@@ -2,3 +2,6 @@
 Package.resolved
 .DS_Store
 
+
+# SwiftPM build products and resolved dependency checkouts
+.build/
